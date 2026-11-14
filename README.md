@@ -4,15 +4,13 @@
 
 [**Live Web Dashboard (GitHub Pages)**](https://andreilab.github.io/AgentBench/) · [**Agent Skill (`SKILL.md`)**](.agents/skills/agentbreak-bench/SKILL.md) · [**Harbor Task (`harbor_task/`)**](harbor_task/task.toml) · [**Scorecard (`runs/SCORECARD.md`)**](runs/SCORECARD.md)
 
-![AgentBreak Bench Cover Art](docs/assets/concept-hero-art.png)
+![AgentBreak Bench Banner](viewer/public/assets/agentbreak-banner.svg)
 
 ---
 
 ## Overview
 
 **AgentBreak Bench** evaluates whether an AI agent can build a valid multi-resource execution plan—and **recover when live operational constraints change mid-episode**.
-
-![AgentBreak Bench Summary Card](docs/assets/hero-banner.png)
 
 Unlike static Q&A or single-turn coding tasks, each episode places the agent in control of a deterministic industrial commissioning environment (**CryoForge**) over the **Model Context Protocol (`mcp` stdio / SSE)**:
 
@@ -22,12 +20,12 @@ Unlike static Q&A or single-turn coding tasks, each episode places the agent in 
 - **Verified Harbor Sandbox (`runs/harbor_jobs/`):** Containerized two-service Harbor evaluations (`cryoforge-mcp` SSE sidecar + isolated `/workspace` agent container) are verified and archived in [`runs/harbor_jobs/`](runs/harbor_jobs/) with **`oracle = 0.9445`** and **`nop = 0.0000`**.
 - **Held-Out Small-Model Learning (`+143%`):** Distilling successful trajectories from the 5 evaluation scenarios (`S01–S05`) lifts `gemini-3.5-flash-lite` from **`0.1400` to `0.3400`** (`+0.2000` / **`+142.9%`**) on 3 unseen held-out scenarios (`S06–S08`) with zero test-set leakage.
 
+![Figure 01 — Benchmark System](viewer/public/figures/figure-01-benchmark-system.svg)
+
 | Dynamic Multi-Lane Rerouting | Zero-Trust Server Verification |
 | :---: | :---: |
 | ![Multi-Lane Disruption Art](docs/assets/concept-disruption-art.png) | ![Zero-Trust Verification Art](docs/assets/concept-shield-art.png) |
 | *4 modular jobs coordinated across 2 parallel lanes around live Step-4 disruptions* | *8/8 reward-hacking shortcuts deflected by immutable terminal state auditing* |
-
-![Episode Architecture](docs/assets/architecture-flow.png)
 
 ---
 
@@ -84,7 +82,7 @@ python scripts/run_eval.py --all --env-file .env --frontier-provider gemini --fr
 
 ## Benchmark Results & Held-Out Learning
 
-![Scenario Comparison & Small-Model Learning](docs/assets/results-comparison.png)
+![Figure 02 — Performance Gap](viewer/public/figures/figure-02-agent-gap.svg)
 
 All trajectories and `HMAC-SHA256` state signatures are stored in [`runs/trajectories/`](runs/trajectories/), [`runs/scorecard.json`](runs/scorecard.json), and [`runs/SCORECARD.md`](runs/SCORECARD.md).
 
@@ -99,9 +97,13 @@ All trajectories and `HMAC-SHA256` state signatures are stored in [`runs/traject
 | **Harbor Container Verification** | **`0.9445` / `0.0000`** | Verified `oracle` (`0.9445`) and `nop` (`0.0000`) logs in `runs/harbor_jobs/` |
 | **Held-Out Small-Model Learning (`S06–S08`)** | **`0.1400 → 0.3400`** | **`+142.9%`** relative gain (`+0.2000`) on `gemini-3.5-flash-lite` |
 
+![Scenario Breakdown & Small-Model Learning](docs/assets/results-comparison.png)
+
 ---
 
 ## Evaluation Scenarios (`S01–S05`)
+
+![Figure 03 — Disruption Recovery](viewer/public/figures/figure-03-disruption-recovery.svg)
 
 | Scenario | Purpose Name | Mid-Episode Disruption (Step 4) | Reference | Frontier (3× Runs) | Frontier Mean ± Std | Gap Δ |
 |---|---|---|---:|---|---:|---:|
@@ -111,6 +113,12 @@ All trajectories and `HMAC-SHA256` state signatures are stored in [`runs/traject
 | **`S04`** | Safety clearance increase | `Job 3` load uprate (`2.5 MPa`) & Alpine route `2,700 mm` clearance lock | `0.9480` | `0.340`, `0.068`, `0.892` | `0.4334 ± 0.3429` | **`+0.5146`** |
 | **`S05`** | Emergency budget cut | Tier-2 supplier `+2w` backlog & `Lane A` `5,200 kg` hoist cap | `0.9533` | `0.587`, `0.016`, `0.587` | `0.3963 ± 0.2689` | **`+0.5570`** |
 | **Mean** | **5 Evaluation Scenarios** | **15 Live Frontier Rollouts** | **`0.9491`** | **Min `0.016` / Max `0.892`** | **`0.3162 ± 0.2496`** | **`+0.6329`** |
+
+---
+
+## Reward Integrity & Anti-Cheat (`8 / 8` Blocked)
+
+![Figure 04 — Reward Integrity](viewer/public/figures/figure-04-reward-integrity.svg)
 
 ---
 
@@ -132,7 +140,7 @@ Trajectories and failure contrasts are distilled strictly from `S01–S05` (`zer
 ```text
 ├── .agents/skills/agentbreak-bench/   # Portable Agent Skill (Codex / OpenCode / Antigravity)
 ├── .github/workflows/pages.yml        # Automated GitHub Pages deployment for viewer/
-├── docs/assets/                       # Product artwork, architecture & results graphics
+├── docs/assets/                       # Bespoke studio design renders & held-out transfer chart
 ├── env_core/                          # Deterministic physics, schedule ledger, scenarios & verifier
 ├── eval/                              # Reference planner, baselines, exploit suite & LLM runners
 ├── harbor_task/                       # Self-contained Harbor v1.0 task + MCP SSE sidecar
@@ -141,5 +149,5 @@ Trajectories and failure contrasts are distilled strictly from `S01–S05` (`zer
 ├── scripts/run_eval.py                # 1-command verification, evaluation & dashboard launcher
 ├── tests/                             # 17 deterministic physics, anti-cheat & verifier unit tests
 ├── tiebreaker/                        # S01–S05 trajectory distillation & S06–S08 held-out evaluator
-└── viewer/                            # React + TypeScript + Vite interactive web dashboard
+└── viewer/                            # React + TypeScript + Vite web dashboard + public/figures/
 ```

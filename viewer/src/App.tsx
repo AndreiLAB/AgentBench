@@ -407,6 +407,37 @@ function summarizeStepCall(step: TrajectoryStepLog): {
   };
 }
 
+const BENCHMARK_FIGURES = [
+  {
+    id: "fig-01",
+    code: "FIGURE 01",
+    title: "Benchmark system",
+    caption: "Setup → Initial plan → Step-4 disruption → Hard server verification",
+    src: "./figures/figure-01-benchmark-system.svg",
+  },
+  {
+    id: "fig-02",
+    code: "FIGURE 02",
+    title: "Performance gap (+0.63)",
+    caption: "Reference solver (0.95) vs. frontier agent (0.32) across 5 disruptions",
+    src: "./figures/figure-02-agent-gap.svg",
+  },
+  {
+    id: "fig-03",
+    code: "FIGURE 03",
+    title: "Disruption recovery",
+    caption: "12-week schedule rerouting around a mid-episode Lane B outage",
+    src: "./figures/figure-03-disruption-recovery.svg",
+  },
+  {
+    id: "fig-04",
+    code: "FIGURE 04",
+    title: "Reward integrity (8/8)",
+    caption: "Eight adversarial reward-hacking strategies capped at 0.00–0.08",
+    src: "./figures/figure-04-reward-integrity.svg",
+  },
+] as const;
+
 function Overview({
   scorecard,
   onExplore,
@@ -420,6 +451,7 @@ function Overview({
 }) {
   const [howOpen, setHowOpen] = useState(false);
   const [copiedCmdId, setCopiedCmdId] = useState<string | null>(null);
+  const [activeFigure, setActiveFigure] = useState<(typeof BENCHMARK_FIGURES)[number] | null>(null);
 
   const copyInstallCmd = async (id: string, text: string) => {
     try {
@@ -603,6 +635,13 @@ function Overview({
                 </div>
               </article>
             </div>
+            <div className="flow-svg-frame">
+              <img
+                src="./assets/benchmark-flow.svg"
+                alt="Benchmark loop: Plan four jobs, adapt at Step 4, verify every constraint"
+                loading="lazy"
+              />
+            </div>
           </div>
         )}
       </section>
@@ -760,6 +799,64 @@ function Overview({
           })}
         </div>
       </section>
+
+      <section className="panel figures-gallery-panel" aria-label="Benchmark architecture and result figures">
+        <div className="panel-heading" style={{ marginBottom: 16 }}>
+          <div>
+            <p className="eyebrow">Architecture &amp; result figures</p>
+            <h2>Vector system diagrams (click any figure to zoom)</h2>
+          </div>
+          <span className="score-range">SVG · High-DPI</span>
+        </div>
+        <div className="figures-strip-grid">
+          {BENCHMARK_FIGURES.map((fig) => (
+            <button
+              key={fig.id}
+              type="button"
+              className="figure-thumb-card"
+              onClick={() => setActiveFigure(fig)}
+            >
+              <div className="figure-thumb-frame">
+                <img src={fig.src} alt={`${fig.code} — ${fig.title}`} loading="lazy" />
+              </div>
+              <div className="figure-thumb-meta">
+                <span>{fig.code}</span>
+                <strong>{fig.title}</strong>
+                <p>{fig.caption}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {activeFigure && (
+        <div
+          className="figure-lightbox-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label={activeFigure.title}
+          onClick={() => setActiveFigure(null)}
+        >
+          <div className="figure-lightbox-card" onClick={(e) => e.stopPropagation()}>
+            <div className="figure-lightbox-top">
+              <div>
+                <span>{activeFigure.code}</span>
+                <strong>{activeFigure.title}</strong>
+              </div>
+              <button
+                type="button"
+                className="compact-toggle"
+                onClick={() => setActiveFigure(null)}
+              >
+                Close ✕
+              </button>
+            </div>
+            <div className="figure-lightbox-body">
+              <img src={activeFigure.src} alt={activeFigure.title} />
+            </div>
+          </div>
+        </div>
+      )}
 
       <section className="panel judge-panel">
         <div className="panel-heading">
@@ -1386,6 +1483,7 @@ function Comparison({
 
 function Integrity({ scorecard }: { scorecard: ScorecardData }) {
   const [showAttackDetails, setShowAttackDetails] = useState(false);
+  const [showFigure04, setShowFigure04] = useState(false);
 
   const blockedRatio = `${scorecard.rubric.exploits_blocked}/${scorecard.rubric.exploits_total}`;
   const maxExploit = scorecard.rubric.max_exploit_score.toFixed(2);
@@ -1459,6 +1557,14 @@ function Integrity({ scorecard }: { scorecard: ScorecardData }) {
             <button
               type="button"
               className="compact-toggle"
+              onClick={() => setShowFigure04((prev) => !prev)}
+              aria-expanded={showFigure04}
+            >
+              {showFigure04 ? "Hide Figure 04 ▴" : "Figure 04 diagram ▾"}
+            </button>
+            <button
+              type="button"
+              className="compact-toggle"
               onClick={() => setShowAttackDetails((prev) => !prev)}
               aria-expanded={showAttackDetails}
             >
@@ -1466,6 +1572,15 @@ function Integrity({ scorecard }: { scorecard: ScorecardData }) {
             </button>
           </div>
         </div>
+        {showFigure04 && (
+          <div className="inline-figure-drawer">
+            <img
+              src="./figures/figure-04-reward-integrity.svg"
+              alt="Figure 04 — Reward integrity attack matrix (8/8 blocked)"
+              loading="lazy"
+            />
+          </div>
+        )}
         <div className="table-scroll">
           <table className={showAttackDetails ? "" : "compact-table"}>
             <thead>
@@ -1872,11 +1987,13 @@ export function App() {
             onClick={() => setActiveTab("overview")}
             aria-label="AgentBreak Bench home"
           >
-            <span className="brand-mark">
-              <i />
-              <i />
-              <i />
-            </span>
+            <img
+              src="./assets/agentbreak-mark.svg"
+              alt=""
+              className="brand-mark-img"
+              width={32}
+              height={32}
+            />
             <span>
               <strong>AgentBreak</strong>
               <small>BENCH</small>
@@ -1948,11 +2065,13 @@ export function App() {
       </main>
       <footer>
         <div>
-          <span className="brand-mark small">
-            <i />
-            <i />
-            <i />
-          </span>
+          <img
+            src="./assets/agentbreak-mark.svg"
+            alt=""
+            className="brand-mark-img small"
+            width={24}
+            height={24}
+          />
           <strong>AgentBreak Bench</strong>
         </div>
         <p>Multi-Constraint Operations & Disruption-Recovery AI Benchmark</p>
