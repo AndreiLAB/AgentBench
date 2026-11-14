@@ -1,563 +1,1725 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Activity,
-  AlertTriangle,
-  Award,
-  BarChart3,
-  CheckCircle2,
-  ExternalLink,
-  FileUp,
-  Flame,
-  Layers,
-  RefreshCw,
-  ShieldCheck,
-  Sparkles,
-  Zap,
-} from "lucide-react";
-import {
-  loadStudioData,
-  normalizeScorecardPayload,
-  type DataSourceMode,
-} from "./lib/apiAdapter";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
 import { FALLBACK_SCORECARD } from "./data/fallbackScorecard";
+import { loadStudioData, normalizeScorecardPayload } from "./lib/apiAdapter";
 import {
-  EVAL_SEEDS,
-  TIEBREAKER_SEEDS,
-  type CanonicalFailureCode,
-  type FailureIncidentLink,
-  type ScorecardData,
+  formatBayLabel,
+  humanizeViolationString,
+} from "./lib/plainEnglishLabels";
+import {
+  type OrderLiveSnapshot,
+  extractSeedWorldMetadata,
+  findShockArrayIndex,
+  replayTrajectoryAtStep,
+} from "./lib/trajectoryEngine";
+import type {
+  BayBlackoutWindow,
+  ExploitAuditItem,
+  OrderVerificationResult,
+  ScorecardData,
+  TrajectoryLog,
+  TrajectoryStepLog,
 } from "./types/cryoforge";
-import { TrajectoryDiff, type FocusedIncidentTarget } from "./components/TrajectoryDiff";
-import { ScorecardPanel } from "./components/ScorecardPanel";
-import { TiebreakerPanel } from "./components/TiebreakerPanel";
 
-type StudioTab = "replay" | "integrity" | "tiebreaker";
+type IconName =
+  | "overview"
+  | "compare"
+  | "shield"
+  | "learn"
+  | "arrow"
+  | "check"
+  | "x"
+  | "copy"
+  | "play"
+  | "spark"
+  | "terminal";
 
-export const App: React.FC = () => {
-  const [scorecard, setScorecard] = useState<ScorecardData>(FALLBACK_SCORECARD);
-  const [sourceMode, setSourceMode] = useState<DataSourceMode>("bundled_fallback");
-  const [sourceLabel, setSourceLabel] = useState<string>("PROBING API / ARTIFACT...");
-  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+const iconPaths: Record<IconName, ReactNode> = {
+  overview: (
+    <>
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </>
+  ),
+  compare: (
+    <>
+      <path d="M7 3v18M17 3v18" />
+      <path d="m3 7 4-4 4 4M13 17l4 4 4-4" />
+    </>
+  ),
+  shield: (
+    <>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
+      <path d="m9 12 2 2 4-4" />
+    </>
+  ),
+  learn: (
+    <>
+      <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" />
+      <path d="m3 5 6-3 6 5 6-4" />
+    </>
+  ),
+  arrow: <path d="m9 18 6-6-6-6" />,
+  check: <path d="m5 12 4 4L19 6" />,
+  x: (
+    <>
+      <path d="m7 7 10 10M17 7 7 17" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="8" y="8" width="12" height="12" rx="2" />
+      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+    </>
+  ),
+  play: <path d="m9 7 8 5-8 5V7Z" />,
+  spark: (
+    <>
+      <path d="m12 3 1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4L12 3Z" />
+      <path d="m19 14 .7 2.3L22 17l-2.3.7L19 20l-.7-2.3L16 17l2.3-.7L19 14Z" />
+    </>
+  ),
+  terminal: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="m7 9 3 3-3 3M13 15h4" />
+    </>
+  ),
+};
 
-  const [selectedSeed, setSelectedSeed] = useState<string>("S01");
-  const [activeTab, setActiveTab] = useState<StudioTab>("replay");
-  const [preferTiebreakerPair, setPreferTiebreakerPair] = useState<boolean>(false);
-  const [expandedFailureCode, setExpandedFailureCode] = useState<CanonicalFailureCode | null>(null);
-  const [focusedIncident, setFocusedIncident] = useState<FocusedIncidentTarget | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const refreshData = async () => {
-    setIsRefreshing(true);
-    try {
-      const bundle = await loadStudioData();
-      setScorecard(bundle.scorecard);
-      setSourceMode(bundle.sourceMode);
-      setSourceLabel(bundle.sourceLabel);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  useEffect(() => {
-    void refreshData();
-  }, []);
-
-  const handleUploadJson = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const txt = await file.text();
-      const parsed = JSON.parse(txt);
-      const merged = normalizeScorecardPayload(parsed);
-      setScorecard(merged);
-      setSourceMode("custom_upload");
-      setSourceLabel(`UPLOADED (${file.name})`);
-      if (parsed?.seed && typeof parsed.seed === "string") {
-        setSelectedSeed(parsed.seed);
-      }
-    } catch {
-      // Ignore malformed JSON silently
-    } finally {
-      e.target.value = "";
-    }
-  };
-
-  const seedRuns = useMemo(() => {
-    const matching = scorecard.trajectories.filter((t) => t.seed === selectedSeed);
-    return matching.length > 0
-      ? matching
-      : FALLBACK_SCORECARD.trajectories.filter((t) => t.seed === selectedSeed);
-  }, [scorecard, selectedSeed]);
-
-  const currentSeedSummary = useMemo(
-    () => scorecard.per_seed.find((s) => s.seed === selectedSeed) ?? scorecard.per_seed[0],
-    [scorecard, selectedSeed]
+function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {iconPaths[name]}
+    </svg>
   );
+}
 
-  const jumpToFailureIncident = (inc: FailureIncidentLink) => {
-    setSelectedSeed(inc.seed);
-    setPreferTiebreakerPair(inc.run_id.includes("small"));
-    setActiveTab("replay");
-    setFocusedIncident({
-      seed: inc.seed,
-      run_id: inc.run_id,
-      order_id: inc.order_id,
-      step_index: inc.step_index,
-      nonce: Date.now(),
-    });
-  };
+const tabs = [
+  { id: "overview", label: "Overview", icon: "overview" as IconName },
+  { id: "comparison", label: "Agent comparison", icon: "compare" as IconName },
+  { id: "integrity", label: "Reward integrity", icon: "shield" as IconName },
+  { id: "learning", label: "Learning & CLI", icon: "learn" as IconName },
+];
 
-  const selectedTaxonomy = scorecard.failure_taxonomy.find(
-    (f) => f.code === expandedFailureCode
+interface EvalScenarioMeta {
+  seed: string;
+  title: string;
+  category: string;
+  detail: string;
+  disruption: string;
+  defaultRunIdx: number;
+}
+
+const EVAL_SCENARIOS: EvalScenarioMeta[] = [
+  {
+    seed: "S02",
+    title: "Standard lane outage",
+    category: "Live maintenance outage",
+    detail: "Lane B closes for maintenance in Weeks 5–7 and €15,000 contingency is frozen after initial commitments.",
+    disruption: "Lane B outage (W5–7)",
+    defaultRunIdx: 1,
+  },
+  {
+    seed: "S05",
+    title: "Emergency budget cut",
+    category: "Cost & hoist constraint shift",
+    detail: "Tier-2 supplier backlog (+2 weeks) and a 5,200 kg Lane A lift cap force costly emergency retooling.",
+    disruption: "Budget strain + lift cap",
+    defaultRunIdx: 1,
+  },
+  {
+    seed: "S03",
+    title: "Reduced lane capacity",
+    category: "Efficiency & permit drop",
+    detail: "Standard-tier efficiency degrades 1.55× while oversize route permits are cut from 2 to 1 mid-episode.",
+    disruption: "1.55× loss & −1 permit",
+    defaultRunIdx: 2,
+  },
+  {
+    seed: "S04",
+    title: "Safety clearance increase",
+    category: "Safety & corridor lock",
+    detail: "Job 3 minimum safety pressure jumps to 2.5 MPa and Alpine corridor height clearance locks at 2,700 mm.",
+    disruption: "2.5 MPa & 2.7m clearance",
+    defaultRunIdx: 0,
+  },
+  {
+    seed: "S01",
+    title: "Accelerated deadline",
+    category: "Lead-time compression",
+    detail: "Customs hold adds +3 weeks to precision kits—compressing effective SLA windows—and caps North route mass at 5.8t.",
+    disruption: "+3w lead & 5.8t cap",
+    defaultRunIdx: 0,
+  },
+];
+
+const HELDOUT_PLAIN_TITLES: Record<string, { title: string; summary: string }> = {
+  S06: {
+    title: "Precision delay & corridor weight cap",
+    summary: "Tier-3 lead time +2 weeks, Fjord route capped at 5,600 kg, and €10k budget cut.",
+  },
+  S07: {
+    title: "Lane A outage & oversize permit cut",
+    summary: "Lane A offline in Weeks 4–6, Standard-tier loss 1.50×, and permits cut from 2 to 1.",
+  },
+  S08: {
+    title: "Safety pressure uprate & clearance lock",
+    summary: "Job 2 uprated to 2.5 MPa, Gorge clearance locked at 2,700 mm, and Lane B capped at 5.1t.",
+  },
+};
+
+const EXPLOIT_PLAIN_MAP: Record<string, { title: string; defense: string; attempt: string }> = {
+  EXPLOIT_01_IMMEDIATE_FINALIZE: {
+    title: "Immediate Finalize",
+    defense: "Batch completeness gate",
+    attempt: "Calls finalize_commissioning() on Turn 1 with zero scheduled jobs hoping for base credit.",
+  },
+  EXPLOIT_02_CHERRY_PICK_ONE_EASY_ORDER: {
+    title: "Cherry-Pick 1 Easy Job",
+    defense: "1/4 batch cap (≤ 0.08)",
+    attempt: "Schedules only the easiest warm-up job and stops early to dodge multi-lane contention.",
+  },
+  EXPLOIT_03_SCHEMA_AND_NAN_FUZZING: {
+    title: "Schema & NaN Injection",
+    defense: "Strict Pydantic schema",
+    attempt: "Injects unsupported fields or NaN/Inf numerics to bypass constraint arithmetic.",
+  },
+  EXPLOIT_04_FREE_ORACLE_RESERVE_FARMING: {
+    title: "Tool Oracle Farming",
+    defense: "Anti-oracle + retool fee",
+    attempt: "Repeatedly books and revises jobs to probe hidden physics without spending simulation quota.",
+  },
+  EXPLOIT_05_SIM_QUOTA_OVERFLOW: {
+    title: "Sim Budget Overflow",
+    defense: "Hard 3-call server quota",
+    attempt: "Attempts a 4th simulation tool call after exhausting the 3-call episode budget.",
+  },
+  EXPLOIT_06_BAY_AND_PERMIT_DOUBLE_SPEND: {
+    title: "Lane & Permit Double-Spend",
+    defense: "Global resource ledger",
+    attempt: "Double-books overlapping lane weeks or reuses a single oversize transport permit twice.",
+  },
+  EXPLOIT_07_POST_FINALIZE_MUTATION: {
+    title: "Post-Finalize Mutation",
+    defense: "Immutable terminal lock",
+    attempt: "Attempts to mutate bookings after finalize_commissioning() has locked the episode.",
+  },
+  EXPLOIT_08_STATIC_PREBOOK_IGNORE_SHOCK: {
+    title: "Ignoring Disruption",
+    defense: "Post-shock state audit",
+    attempt: "Submits the pre-disruption schedule unchanged without adapting to live constraint shifts.",
+  },
+};
+
+const FAILURE_SHORT_LABELS: Record<string, string> = {
+  SIM_EXHAUSTION: "Tool budget (3/3)",
+  SHOCK_UNADAPTED: "Ignored disruption",
+  BAY_CONFLICT: "Lane collision",
+  HOOP_STRESS: "Safety margin",
+  BRIDGE_MASS_CAP: "Route capacity",
+  BOIL_OFF: "Efficiency limit",
+};
+
+function StatusBadge({ pass, children }: { pass: boolean; children: ReactNode }) {
+  return (
+    <span className={`status-badge ${pass ? "pass" : "fail"}`}>
+      <Icon name={pass ? "check" : "x"} size={13} />
+      {children}
+    </span>
   );
+}
+
+function SectionHeading({
+  eyebrow,
+  title,
+  description,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="section-heading">
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
+        <h2>{title}</h2>
+      </div>
+      <p>{description}</p>
+    </div>
+  );
+}
+
+function formatBookingChoice(
+  snap: OrderLiveSnapshot | undefined,
+  verif: OrderVerificationResult | undefined
+): string {
+  const b = snap?.booking;
+  if (!b) {
+    if (verif && !verif.booked) return "Unscheduled · Not booked";
+    return "Unscheduled";
+  }
+  const lane = formatBayLabel(b.bay_id);
+  const endInclusive = Math.max(b.bay_start_week, b.fab_end_week - 1);
+  const weeks =
+    b.bay_start_week === endInclusive
+      ? `W${b.bay_start_week}`
+      : `W${b.bay_start_week}–${endInclusive}`;
+  const units = `${b.spec.unit_count}×${b.spec.unit_volume_m3}m³`;
+  const tier = b.spec.insulation === "EVI" ? "High-Eff" : "Std-Tier";
+  const deliv = verif?.delivery_week ?? snap?.deliveryWeek;
+  const delivTag = deliv != null ? ` · Deliv W${deliv}` : "";
+  return `${lane} · ${weeks} · ${units} · ${tier}${delivTag}`;
+}
+
+function formatOrderTaskTitle(snap: OrderLiveSnapshot): string {
+  const mode = snap.order.execution === "TRANSPORTABLE" ? "Mobile transfer" : "Stationary install";
+  return `${snap.order.client_name} · ${mode} (SLA W${snap.order.sla_week})`;
+}
+
+function summarizeStepCall(step: TrajectoryStepLog): {
+  signature: string;
+  summary: string;
+  status: "ENVIRONMENT EVENT" | "VERIFIED" | "REJECTED" | "SUCCESS";
+  variant: "" | "event" | "rejected";
+} {
+  const args = step.arguments ?? {};
+  const obs = step.observation ?? {};
+  const ok = obs.ok !== false;
+
+  let argPreview = "";
+  if (typeof args.order_id === "string") {
+    const jobNum = args.order_id.replace("ORD-", "Job ");
+    const extras: string[] = [jobNum];
+    if (typeof args.bay_id === "string") extras.push(formatBayLabel(args.bay_id));
+    if (typeof args.bay_start_week === "number") extras.push(`W${args.bay_start_week}`);
+    if (typeof args.route_id === "string") extras.push(args.route_id);
+    argPreview = extras.join(", ");
+  } else if (typeof args.section === "string") {
+    argPreview = `"${args.section}"`;
+  }
+
+  const signature = `${step.tool_name}(${argPreview})`;
+
+  if (step.disruption_triggered_this_step) {
+    const alertObj =
+      obs.disruption_alert && typeof obs.disruption_alert === "object"
+        ? (obs.disruption_alert as Record<string, unknown>)
+        : null;
+    const headline =
+      typeof alertObj?.headline === "string"
+        ? humanizeViolationString(alertObj.headline)
+        : "Live mid-episode constraint disruption applied to server state.";
+    return {
+      signature,
+      summary: `Disruption triggered: ${headline}`,
+      status: "ENVIRONMENT EVENT",
+      variant: "event",
+    };
+  }
+
+  if (!ok) {
+    const errCode = typeof obs.error === "string" ? obs.error : "CONSTRAINT_REJECTED";
+    const msg = typeof obs.message === "string" ? obs.message : "Rejected by server guardrail.";
+    return {
+      signature,
+      summary: humanizeViolationString(`${errCode}: ${msg}`),
+      status: "REJECTED",
+      variant: "rejected",
+    };
+  }
+
+  if (step.tool_name === "finalize_commissioning") {
+    const score = typeof obs.final_score === "number" ? obs.final_score.toFixed(2) : "—";
+    const valid = typeof obs.valid_order_count === "number" ? `${obs.valid_order_count}/4 valid` : "audited";
+    return {
+      signature,
+      summary: `Zero-trust server audit completed: ${valid}, final score ${score}.`,
+      status: "VERIFIED",
+      variant: "",
+    };
+  }
+
+  if (step.tool_name === "get_episode_brief") {
+    return {
+      signature,
+      summary: "Loaded 4 interdependent jobs, 2 execution lanes, budget cap, and 3-call simulation limit.",
+      status: "SUCCESS",
+      variant: "",
+    };
+  }
+
+  if (step.tool_name === "read_engineering_handbook") {
+    return {
+      signature,
+      summary: "Read deterministic safety margin, thermal loss, and corridor clearance formulas.",
+      status: "SUCCESS",
+      variant: "",
+    };
+  }
+
+  if (step.tool_name === "run_physics_sim") {
+    const rem = typeof obs.sim_calls_remaining === "number" ? `${obs.sim_calls_remaining} left` : "checked";
+    return {
+      signature,
+      summary: `Simulated candidate configuration against engineering thresholds (${rem}).`,
+      status: "SUCCESS",
+      variant: "",
+    };
+  }
+
+  if (step.tool_name === "reserve_bay_and_order" || step.tool_name === "revise_order") {
+    const verb = step.tool_name === "revise_order" ? "Revised" : "Reserved";
+    return {
+      signature,
+      summary: `${verb} lane schedule and hardware spec (${argPreview || "updated ledger"}).`,
+      status: "SUCCESS",
+      variant: "",
+    };
+  }
+
+  if (step.tool_name === "assign_transport") {
+    const permit = args.use_escort_permit ? "with oversize permit" : "standard gauge";
+    return {
+      signature,
+      summary: `Assigned transport corridor (${argPreview}) ${permit}.`,
+      status: "SUCCESS",
+      variant: "",
+    };
+  }
+
+  return {
+    signature,
+    summary: "Executed MCP tool call against live plant state.",
+    status: "SUCCESS",
+    variant: "",
+  };
+}
+
+function Overview({
+  scorecard,
+  onExplore,
+}: {
+  scorecard: ScorecardData;
+  onExplore: () => void;
+}) {
+  const [howOpen, setHowOpen] = useState(false);
+
+  const refMean = scorecard.rubric.reference_mean.toFixed(2);
+  const frontMean = scorecard.rubric.frontier_mean.toFixed(2);
+  const gapDelta = scorecard.rubric.gap_delta.toFixed(2);
+  const gapWidthPct = Math.max(15, Math.min(95, Math.round(scorecard.rubric.gap_delta * 100)));
+  const failureCount = scorecard.failure_taxonomy.length || 6;
+  const blockedText = `${scorecard.rubric.exploits_blocked}/${scorecard.rubric.exploits_total}`;
+  const doNothing = scorecard.rubric.do_nothing_score.toFixed(2);
+  const stopEarly = scorecard.rubric.stop_early_score.toFixed(2);
+  const maxExploit = scorecard.rubric.max_exploit_score.toFixed(2);
+  const beforeMean = scorecard.tiebreaker.before_mean.toFixed(2);
+  const afterMean = scorecard.tiebreaker.after_mean.toFixed(2);
+  const relGainPct = Math.round(scorecard.tiebreaker.relative_gain_pct);
+
+  const failureChips =
+    scorecard.failure_taxonomy.length > 0
+      ? scorecard.failure_taxonomy.map(
+          (f) => FAILURE_SHORT_LABELS[f.code] ?? f.title
+        )
+      : Object.values(FAILURE_SHORT_LABELS);
 
   return (
-    <div className="min-h-screen scada-grid-bg text-slate-100 flex flex-col">
-      {/* Top Industrial SCADA Header */}
-      <header className="sticky top-0 z-40 bg-[#080e17]/95 backdrop-blur-md border-b border-scada-border shadow-xl">
-        <div className="max-w-[1640px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-          {/* Brand Title */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-sky-500/15 border border-sky-400/50 flex items-center justify-center shadow-glow-cyan">
-              <Flame className="w-5 h-5 text-sky-400" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-sm sm:text-base font-mono font-extrabold tracking-tight text-white">
-                  CryoForge RL <span className="text-sky-400">//</span> AfterQuery &ldquo;Break the Agent&rdquo; Studio
-                </h1>
-                <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/40">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  GOST 34347 · HARBOR MCP
-                </span>
-              </div>
-              <p className="text-[11px] font-mono text-slate-400">
-                Multi-Physics Cryogenic Vessel Engineering, 2-Bay Scheduling & Mid-Episode Supply-Shock Evaluation
-              </p>
-            </div>
+    <div className="view-stack">
+      <section className="hero">
+        <div className="hero-copy">
+          <div className="hero-kicker">
+            <Icon name="spark" size={15} />
+            Multi-constraint operations benchmark
           </div>
-
-          {/* Seed Selector + Live API / Artifact Mode Pill */}
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Eval Seeds S01-S05 */}
-            <div className="flex items-center bg-[#0c1522] border border-scada-border rounded-lg p-1 gap-1">
-              <span className="px-1.5 text-[10px] font-mono font-bold text-slate-400 uppercase">
-                Eval
-              </span>
-              {EVAL_SEEDS.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => {
-                    setSelectedSeed(s);
-                    setPreferTiebreakerPair(false);
-                  }}
-                  className={`px-2 py-1 rounded text-xs font-mono font-bold transition ${
-                    selectedSeed === s
-                      ? "bg-sky-500 text-slate-950 shadow-glow-cyan"
-                      : "text-slate-300 hover:bg-slate-800"
-                  }`}
-                >
-                  {s}
-                </button>
-              ))}
-              <span className="text-slate-700 px-0.5">|</span>
-              <span className="px-1 text-[10px] font-mono font-bold text-violet-300 uppercase">
-                Held-Out
-              </span>
-              {TIEBREAKER_SEEDS.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => {
-                    setSelectedSeed(s);
-                    setPreferTiebreakerPair(true);
-                  }}
-                  className={`px-2 py-1 rounded text-xs font-mono font-bold transition ${
-                    selectedSeed === s
-                      ? "bg-violet-400 text-slate-950"
-                      : "text-violet-200/80 hover:bg-violet-950/60"
-                  }`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-
-            {/* Data Source Indicator + Refresh + Upload */}
-            <div className="flex items-center gap-1.5">
-              <span
-                title={sourceLabel}
-                className={`px-2.5 py-1.5 rounded-lg text-[10.5px] font-mono font-bold border flex items-center gap-1.5 ${
-                  sourceMode === "live_api"
-                    ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-                    : sourceMode === "custom_upload"
-                      ? "bg-violet-500/15 text-violet-200 border-violet-400/40"
-                      : "bg-sky-500/15 text-sky-300 border-sky-500/40"
-                }`}
-              >
-                <Activity className="w-3.5 h-3.5" />
-                {sourceMode === "live_api"
-                  ? "LIVE API BRIDGE"
-                  : sourceMode === "custom_upload"
-                    ? sourceLabel
-                    : "BUNDLED ARTIFACT"}
-              </span>
-
-              <button
-                type="button"
-                onClick={() => void refreshData()}
-                title="Probe /api/scorecard & /api/runs"
-                className="p-1.5 rounded-lg bg-[#0c1522] border border-scada-border text-slate-300 hover:text-white"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-sky-400" : ""}`} />
-              </button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json"
-                onChange={handleUploadJson}
-                className="hidden"
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                title="Load custom scorecard.json or TrajectoryLog JSON"
-                className="px-2 py-1.5 rounded-lg bg-[#0c1522] border border-scada-border text-[11px] font-mono text-slate-300 hover:text-white flex items-center gap-1"
-              >
-                <FileUp className="w-3.5 h-3.5 text-sky-400" />
-                JSON
-              </button>
-            </div>
+          <h1>Can an AI agent recover when the plan breaks?</h1>
+          <p>
+            AgentBreak tests planning, tool use, and disruption recovery against hard safety,
+            capacity, and deadline constraints—not just plausible-looking answers.
+          </p>
+          <div className="hero-actions">
+            <button className="primary-button" onClick={onExplore}>
+              Explore agent replay <Icon name="arrow" size={16} />
+            </button>
+            <span className="run-note">
+              <span className="live-dot" /> 5 scenarios · 3 runs each
+            </span>
           </div>
         </div>
-      </header>
+        <div className="score-orbit" aria-label="Benchmark score gap">
+          <div className="score-ring">
+            <span className="score-label">Score gap</span>
+            <strong>+{gapDelta}</strong>
+            <small>reference vs frontier</small>
+          </div>
+        </div>
+      </section>
 
-      {/* Main Content Container */}
-      <main className="max-w-[1640px] w-full mx-auto px-4 py-4 space-y-4 flex-1">
-        {/* 4 AfterQuery Rubric KPI Ribbon Cards */}
-        <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3.5">
-          {/* Card 1: THE GAP (30 pts) */}
-          <div
-            onClick={() => setActiveTab("replay")}
-            className="cursor-pointer bg-[#0c1420] hover:bg-[#0f1928] border border-scada-border hover:border-sky-500/50 rounded-xl p-3.5 shadow-lg transition flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center justify-between text-[10.5px] font-mono uppercase">
-                <span className="text-sky-400 font-bold flex items-center gap-1">
-                  <BarChart3 className="w-3.5 h-3.5" /> 1. THE GAP (30 PTS)
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-extrabold">
-                  Δ +{scorecard.rubric.gap_delta.toFixed(2)}
-                </span>
+      <section className={`how-expander ${howOpen ? "open" : "collapsed"}`}>
+        <button
+          type="button"
+          className="expander-bar"
+          onClick={() => setHowOpen((prev) => !prev)}
+          aria-expanded={howOpen}
+        >
+          <div className="expander-bar-left">
+            <span className="expander-bar-title">How this benchmark works</span>
+            <span className="expander-bar-hint">
+              Plan 4 jobs across 2 lanes · Adapt to live disruption · Deterministic server check
+            </span>
+          </div>
+          <span className="expander-pill">
+            {howOpen ? "Hide details ▴" : "How this benchmark works ▾"}
+          </span>
+        </button>
+
+        {howOpen && (
+          <div className="expander-body">
+            <SectionHeading
+              eyebrow="How this benchmark works"
+              title="One plan. One surprise. Hard verification."
+              description="The agent gets a constrained planning problem, limited tools, and no second chance to ignore reality."
+            />
+            <div className="steps">
+              <article className="step-card">
+                <div className="step-top">
+                  <span className="step-number">01</span>
+                  <span className="step-icon">
+                    <Icon name="overview" size={20} />
+                  </span>
+                </div>
+                <h3>Plan four jobs</h3>
+                <p>Schedule 4 interdependent jobs across 2 lanes with only 3 simulation tool calls.</p>
+                <div className="mini-tags">
+                  <span>4 jobs</span>
+                  <span>2 lanes</span>
+                  <span>3 calls</span>
+                </div>
+              </article>
+              <div className="step-connector">
+                <Icon name="arrow" size={16} />
               </div>
+              <article className="step-card">
+                <div className="step-top">
+                  <span className="step-number">02</span>
+                  <span className="step-icon disruption">
+                    <Icon name="spark" size={20} />
+                  </span>
+                </div>
+                <h3>Adapt mid-episode</h3>
+                <p>A live lane outage, budget cut, or capacity drop invalidates the original plan.</p>
+                <div className="event-chip">
+                  <span /> Mid-episode disruption
+                </div>
+              </article>
+              <div className="step-connector">
+                <Icon name="arrow" size={16} />
+              </div>
+              <article className="step-card">
+                <div className="step-top">
+                  <span className="step-number">03</span>
+                  <span className="step-icon success">
+                    <Icon name="shield" size={20} />
+                  </span>
+                </div>
+                <h3>Verify every constraint</h3>
+                <p>
+                  The server checks the final plan against hard safety, capacity, and deadline rules.
+                </p>
+                <div className="verify-line">
+                  <Icon name="check" size={14} /> Deterministic scoring
+                </div>
+              </article>
+            </div>
+          </div>
+        )}
+      </section>
 
-              <div className="mt-2 flex items-baseline justify-between font-mono">
-                <div>
-                  <div className="text-[10px] text-slate-400">Ref Solver</div>
-                  <div className="text-xl font-extrabold text-emerald-400 tabular-nums">
-                    {scorecard.rubric.reference_mean.toFixed(2)}
+      <section>
+        <SectionHeading
+          eyebrow="Benchmark results"
+          title="Benchmark evidence at a glance"
+          description="Scores are grounded in executable outcomes from runs/scorecard.json, not subjective model judging."
+        />
+        <div className="kpi-grid">
+          <article className="kpi-card gap-card">
+            <div className="kpi-header">
+              <span>The Gap</span>
+              <b>5 eval tasks</b>
+            </div>
+            <div className="model-score-row">
+              <div>
+                <small>Reference solver</small>
+                <strong>{refMean}</strong>
+              </div>
+              <div className="score-vs">vs</div>
+              <div>
+                <small>Frontier agent</small>
+                <strong>{frontMean}</strong>
+              </div>
+            </div>
+            <div className="gap-track">
+              <span style={{ width: `${gapWidthPct}%` }} />
+            </div>
+            <p>
+              <b>+{gapDelta} gap</b> across 5 scenarios and 3 runs each.
+            </p>
+          </article>
+
+          <article className="kpi-card">
+            <div className="kpi-header">
+              <span>Meaningful difficulty</span>
+              <b>6 failure modes</b>
+            </div>
+            <div className="large-metric">
+              {failureCount} <span>failure modes</span>
+            </div>
+            <div className="failure-list">
+              {failureChips.map((x) => (
+                <span key={x}>{x}</span>
+              ))}
+            </div>
+          </article>
+
+          <article className="kpi-card">
+            <div className="kpi-header">
+              <span>Reward integrity</span>
+              <b>Server-guarded</b>
+            </div>
+            <div className="large-metric emerald">
+              {blockedText} <span>exploits blocked (0.00–{maxExploit})</span>
+            </div>
+            <div className="integrity-bars">
+              <div>
+                <span>Do nothing</span>
+                <b>{doNothing}</b>
+              </div>
+              <div>
+                <span>Stop early</span>
+                <b>{stopEarly}</b>
+              </div>
+            </div>
+            <div className="guarded">
+              <Icon name="shield" size={14} /> Server-side validation
+            </div>
+          </article>
+
+          <article className="kpi-card learning-card">
+            <div className="kpi-header">
+              <span>Craft & learning</span>
+              <b>Held-out split</b>
+            </div>
+            <div className="growth-row">
+              <div>
+                <small>Before</small>
+                <strong>{beforeMean}</strong>
+              </div>
+              <Icon name="arrow" size={20} />
+              <div>
+                <small>After</small>
+                <strong>{afterMean}</strong>
+              </div>
+              <span className="growth-pill">+{relGainPct}%</span>
+            </div>
+            <div className="craft-tags">
+              <span>1-cmd reproduction</span>
+              <span>Harbor sandbox</span>
+              <span>Held-out lift</span>
+            </div>
+            <p>1-command local reproduction + held-out generalization from environment trajectories.</p>
+          </article>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+interface TimelineBlock {
+  label: string;
+  startWeek: number;
+  endWeekExclusive: number;
+  variant: "ref" | "front" | "front-fail";
+}
+
+function TimelineRow({
+  lane,
+  totalWeeks,
+  blocks,
+  blackouts,
+  deadline,
+}: {
+  lane: string;
+  totalWeeks: number;
+  blocks: TimelineBlock[];
+  blackouts: BayBlackoutWindow[];
+  deadline: string;
+}) {
+  const weekStyle = { "--weeks": totalWeeks } as CSSProperties;
+  return (
+    <div className="timeline-row">
+      <div className="lane-label">{lane}</div>
+      <div className="week-grid dynamic-weeks" style={weekStyle}>
+        {Array.from({ length: totalWeeks }, (_, i) => (
+          <i key={i} />
+        ))}
+        {blackouts.map((blk, idx) => {
+          const s = Math.max(1, Math.min(totalWeeks, blk.start_week));
+          const e = Math.max(s + 1, Math.min(totalWeeks + 1, blk.end_week));
+          return (
+            <span
+              key={`blk-${idx}`}
+              className="blackout"
+              style={{ gridColumn: `${s} / ${e}` }}
+              title={blk.reason}
+            >
+              <b>OUT</b>
+            </span>
+          );
+        })}
+        {blocks.map((blk, idx) => {
+          const s = Math.max(1, Math.min(totalWeeks, blk.startWeek));
+          const e = Math.max(s + 1, Math.min(totalWeeks + 1, blk.endWeekExclusive));
+          return (
+            <span
+              key={`${blk.label}-${s}-${idx}`}
+              className={`schedule-block ${blk.variant}`}
+              style={{ gridColumn: `${s} / ${e}` }}
+            >
+              {blk.label}
+            </span>
+          );
+        })}
+      </div>
+      <div className="deadline-badge">{deadline}</div>
+    </div>
+  );
+}
+
+function Comparison({ scorecard }: { scorecard: ScorecardData }) {
+  const [selectedSeed, setSelectedSeed] = useState<string>(EVAL_SCENARIOS[0].seed);
+  const [frontierRunIdx, setFrontierRunIdx] = useState<number>(EVAL_SCENARIOS[0].defaultRunIdx);
+  const [openReasons, setOpenReasons] = useState<Record<string, boolean>>({});
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [traceAgent, setTraceAgent] = useState<"frontier" | "reference">("frontier");
+  const [stepIdx, setStepIdx] = useState<number>(0);
+
+  const scenarioIndex = Math.max(
+    0,
+    EVAL_SCENARIOS.findIndex((s) => s.seed === selectedSeed)
+  );
+  const scenario = EVAL_SCENARIOS[scenarioIndex] ?? EVAL_SCENARIOS[0];
+
+  const seedSummary = useMemo(
+    () => scorecard.per_seed.find((s) => s.seed === scenario.seed),
+    [scorecard.per_seed, scenario.seed]
+  );
+
+  const seedTrajectories = useMemo(
+    () => scorecard.trajectories.filter((t) => t.seed === scenario.seed),
+    [scorecard.trajectories, scenario.seed]
+  );
+
+  const referenceRun: TrajectoryLog | undefined = useMemo(
+    () => seedTrajectories.find((t) => t.agent_type === "reference"),
+    [seedTrajectories]
+  );
+
+  const frontierRuns: TrajectoryLog[] = useMemo(
+    () =>
+      seedTrajectories
+        .filter((t) => t.agent_type === "frontier")
+        .sort((a, b) => a.run_id.localeCompare(b.run_id)),
+    [seedTrajectories]
+  );
+
+  const clampedRunIdx = frontierRuns.length > 0 ? Math.min(frontierRunIdx, frontierRuns.length - 1) : 0;
+  const frontierRun: TrajectoryLog | undefined = frontierRuns[clampedRunIdx];
+
+  const world = useMemo(
+    () => extractSeedWorldMetadata(scenario.seed, seedTrajectories),
+    [scenario.seed, seedTrajectories]
+  );
+
+  const refFrame = useMemo(
+    () =>
+      referenceRun
+        ? replayTrajectoryAtStep(referenceRun, referenceRun.steps.length - 1, world)
+        : null,
+    [referenceRun, world]
+  );
+
+  const frontFrame = useMemo(
+    () =>
+      frontierRun
+        ? replayTrajectoryAtStep(frontierRun, frontierRun.steps.length - 1, world)
+        : null,
+    [frontierRun, world]
+  );
+
+  const activeTraceRun = traceAgent === "reference" ? referenceRun : frontierRun;
+  const activeShockIdx = useMemo(
+    () => (activeTraceRun ? findShockArrayIndex(activeTraceRun) : null),
+    [activeTraceRun]
+  );
+
+  useEffect(() => {
+    if (activeTraceRun && activeTraceRun.steps.length > 0) {
+      setStepIdx(activeShockIdx ?? Math.min(3, activeTraceRun.steps.length - 1));
+    } else {
+      setStepIdx(0);
+    }
+  }, [activeTraceRun, activeShockIdx]);
+
+  const handleScenarioChange = (newSeed: string) => {
+    const meta = EVAL_SCENARIOS.find((s) => s.seed === newSeed) ?? EVAL_SCENARIOS[0];
+    setSelectedSeed(meta.seed);
+    setFrontierRunIdx(meta.defaultRunIdx);
+    setOpenReasons({});
+  };
+
+  const jobCards = useMemo(() => {
+    const orders = refFrame?.orders ?? frontFrame?.orders ?? [];
+    return orders.map((ordSnap, idx) => {
+      const orderId = ordSnap.order.order_id;
+      const refSnap = refFrame?.orders.find((o) => o.order.order_id === orderId);
+      const frSnap = frontFrame?.orders.find((o) => o.order.order_id === orderId);
+      const refVerif = referenceRun?.verification.order_results.find((r) => r.order_id === orderId);
+      const frVerif = frontierRun?.verification.order_results.find((r) => r.order_id === orderId);
+
+      const pass = frVerif ? frVerif.passed_all_hard_checks : Boolean(frSnap?.passedAllHardChecks);
+      const rawViolations = frVerif?.violations?.length
+        ? frVerif.violations
+        : frSnap?.allViolations ?? [];
+
+      const reason = pass
+        ? "All safety, efficiency, lane clearance, and delivery deadline rules satisfied."
+        : rawViolations.length > 0
+          ? rawViolations.map(humanizeViolationString).join(" · ")
+          : frontierRun?.verification.budget_exceeded
+            ? "Global operating budget exceeded after emergency retooling."
+            : "Failed terminal constraint verification.";
+
+      return {
+        key: orderId,
+        name: `Job ${idx + 1}`,
+        task: formatOrderTaskTitle(ordSnap),
+        reference: formatBookingChoice(refSnap, refVerif),
+        frontier: formatBookingChoice(frSnap, frVerif),
+        pass,
+        reason,
+      };
+    });
+  }, [refFrame, frontFrame, referenceRun, frontierRun]);
+
+  const { totalWeeks, laneARef, laneAFront, laneBRef, laneBFront, blackoutsA, blackoutsB } =
+    useMemo(() => {
+      const allBlackouts = [
+        ...world.initialBlackouts,
+        ...(world.disruption?.bay_blackouts ?? []),
+      ];
+      let maxEnd = Math.max(12, world.horizonWeeks);
+
+      const buildBlocks = (
+        orders: OrderLiveSnapshot[] | undefined,
+        verifList: OrderVerificationResult[] | undefined,
+        isRef: boolean
+      ) => {
+        const laneA: TimelineBlock[] = [];
+        const laneB: TimelineBlock[] = [];
+        if (!orders) return { laneA, laneB };
+
+        orders.forEach((o, idx) => {
+          const b = o.booking;
+          if (!b) return;
+          maxEnd = Math.max(maxEnd, b.fab_end_week - 1);
+          const v = verifList?.find((r) => r.order_id === o.order.order_id);
+          const passed = v ? v.passed_all_hard_checks : o.passedAllHardChecks;
+          const blk: TimelineBlock = {
+            label: `J${idx + 1}`,
+            startWeek: b.bay_start_week,
+            endWeekExclusive: b.fab_end_week,
+            variant: isRef ? "ref" : passed ? "front" : "front-fail",
+          };
+          if (b.bay_id === "BAY-B") laneB.push(blk);
+          else laneA.push(blk);
+        });
+        return { laneA, laneB };
+      };
+
+      const refB = buildBlocks(
+        refFrame?.orders,
+        referenceRun?.verification.order_results,
+        true
+      );
+      const frB = buildBlocks(
+        frontFrame?.orders,
+        frontierRun?.verification.order_results,
+        false
+      );
+
+      for (const blk of allBlackouts) {
+        maxEnd = Math.max(maxEnd, blk.end_week - 1);
+      }
+
+      return {
+        totalWeeks: Math.min(16, maxEnd),
+        laneARef: refB.laneA,
+        laneBRef: refB.laneB,
+        laneAFront: frB.laneA,
+        laneBFront: frB.laneB,
+        blackoutsA: allBlackouts.filter((b) => b.bay_id === "BAY-A"),
+        blackoutsB: allBlackouts.filter((b) => b.bay_id === "BAY-B"),
+      };
+    }, [world, refFrame, frontFrame, referenceRun, frontierRun]);
+
+  const refScore = (
+    referenceRun?.verification.final_score ??
+    seedSummary?.reference_score ??
+    scorecard.rubric.reference_mean
+  ).toFixed(2);
+  const refValid = referenceRun?.verification.valid_order_count ?? 4;
+
+  const frontScore = (
+    frontierRun?.verification.final_score ??
+    seedSummary?.frontier_mean ??
+    scorecard.rubric.frontier_mean
+  ).toFixed(2);
+  const frontMeanScore = (seedSummary?.frontier_mean ?? scorecard.rubric.frontier_mean).toFixed(2);
+  const frontValid = frontierRun?.verification.valid_order_count ?? 0;
+
+  const traceSteps = activeTraceRun?.steps ?? [];
+  const safeStepIdx =
+    traceSteps.length > 0 ? Math.max(0, Math.min(stepIdx, traceSteps.length - 1)) : 0;
+  const currentStep = traceSteps[safeStepIdx];
+  const stepInfo = currentStep ? summarizeStepCall(currentStep) : null;
+
+  const weekHeaderStyle = { "--weeks": totalWeeks } as CSSProperties;
+
+  return (
+    <div className="view-stack">
+      <section className="view-intro">
+        <div>
+          <p className="eyebrow">Interactive replay</p>
+          <h1>See exactly where the agents diverge.</h1>
+          <p>Compare decisions, schedules, and tool use against the same live disruption.</p>
+        </div>
+        <div className="scenario-control">
+          <label htmlFor="scenario">Disruption scenario</label>
+          <select
+            id="scenario"
+            value={scenario.seed}
+            onChange={(e) => handleScenarioChange(e.target.value)}
+          >
+            {EVAL_SCENARIOS.map((item) => (
+              <option key={item.seed} value={item.seed}>
+                {item.title}
+              </option>
+            ))}
+          </select>
+        </div>
+      </section>
+
+      <section className="scenario-banner">
+        <div className="scenario-index">{String(scenarioIndex + 1).padStart(2, "0")}</div>
+        <div>
+          <span>{scenario.category}</span>
+          <h2>{scenario.title}</h2>
+          <p>{scenario.detail}</p>
+        </div>
+        <div className="disruption-label">
+          <span>Mid-episode disruption</span>
+          <strong>{scenario.disruption}</strong>
+        </div>
+      </section>
+
+      <section>
+        <div className="agent-summary">
+          <div className="agent-title">
+            <span className="agent-dot reference" />
+            <div>
+              <small>REFERENCE AGENT</small>
+              <h3>Constraint-aware solver</h3>
+            </div>
+          </div>
+          <div className="agent-result">
+            <strong>{refScore}</strong>
+            <StatusBadge pass={refValid === 4}>{refValid}/4 valid</StatusBadge>
+          </div>
+          <div className="agent-divider" />
+          <div className="agent-title">
+            <span className="agent-dot frontier" />
+            <div>
+              <small>FRONTIER AGENT</small>
+              <h3>{scorecard.trajectories.find((t) => t.agent_type === "frontier")?.model_id ?? "gemini-3.8-flash"}</h3>
+              <div className="agent-subrow">
+                <span className="agent-avg-note">3-run avg {frontMeanScore}</span>
+                {frontierRuns.length > 1 && (
+                  <div className="run-pills" role="group" aria-label="Select recorded frontier run">
+                    {frontierRuns.map((run, rIdx) => (
+                      <button
+                        key={run.run_id}
+                        type="button"
+                        className={clampedRunIdx === rIdx ? "active" : ""}
+                        onClick={() => {
+                          setFrontierRunIdx(rIdx);
+                          setOpenReasons({});
+                        }}
+                      >
+                        R{rIdx + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="agent-result">
+            <strong>{frontScore}</strong>
+            <StatusBadge pass={frontValid === 4}>{frontValid}/4 valid</StatusBadge>
+          </div>
+        </div>
+
+        <div className="job-grid">
+          {jobCards.map((job) => {
+            const isWhyOpen = Boolean(openReasons[job.key]);
+            return (
+              <article className={`job-card ${job.pass ? "" : "broken"}`} key={job.key}>
+                <div className="job-heading">
+                  <div>
+                    <span>{job.name}</span>
+                    <h3>{job.task}</h3>
+                  </div>
+                  <StatusBadge pass={job.pass}>{job.pass ? "Valid" : "Failed"}</StatusBadge>
+                </div>
+                <div className="choice-row">
+                  <span className="choice-mark reference" />
+                  <div>
+                    <small>Reference choice</small>
+                    <p>{job.reference}</p>
                   </div>
                 </div>
-                <div className="text-slate-600 text-xs">vs</div>
-                <div className="text-right">
-                  <div className="text-[10px] text-slate-400">3× Frontier Mean</div>
-                  <div className="text-xl font-extrabold text-amber-400 tabular-nums">
-                    {scorecard.rubric.frontier_mean.toFixed(2)}{" "}
-                    <span className="text-xs font-normal text-slate-400">
-                      ±{scorecard.rubric.frontier_std.toFixed(2)}
+                <div className="choice-row">
+                  <span className="choice-mark frontier" />
+                  <div>
+                    <small>Frontier choice</small>
+                    <p>{job.frontier}</p>
+                  </div>
+                </div>
+                {!job.pass && (
+                  <>
+                    <div className="why-row">
+                      <button
+                        type="button"
+                        className="why-toggle"
+                        onClick={() =>
+                          setOpenReasons((prev) => ({ ...prev, [job.key]: !prev[job.key] }))
+                        }
+                        aria-expanded={isWhyOpen}
+                      >
+                        {isWhyOpen ? "Hide reason ▴" : "Why? ▾"}
+                      </button>
+                    </div>
+                    {isWhyOpen && (
+                      <div className="reason">
+                        <Icon name="x" size={14} />
+                        <span>{job.reason}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Schedule comparison</p>
+            <h2>{totalWeeks}-week lane timeline</h2>
+          </div>
+          <div className="legend">
+            <span>
+              <i className="ref-color" />
+              Reference
+            </span>
+            <span>
+              <i className="front-color" />
+              Frontier
+            </span>
+            <span>
+              <i className="blackout-color" />
+              Outage
+            </span>
+          </div>
+        </div>
+        <div className="timeline-wrap">
+          <div className="timeline">
+            <div className="timeline-head dynamic-weeks" style={weekHeaderStyle}>
+              <div>Execution lane</div>
+              {Array.from({ length: totalWeeks }, (_, i) => (
+                <span key={i}>W{i + 1}</span>
+              ))}
+              <div>Status</div>
+            </div>
+            <TimelineRow
+              lane="Lane A · Ref"
+              totalWeeks={totalWeeks}
+              blocks={laneARef}
+              blackouts={blackoutsA}
+              deadline="All valid"
+            />
+            <TimelineRow
+              lane="Lane A · Frontier"
+              totalWeeks={totalWeeks}
+              blocks={laneAFront}
+              blackouts={blackoutsA}
+              deadline={
+                laneAFront.some((b) => b.variant === "front-fail")
+                  ? "Rule breach"
+                  : laneAFront.length > 0
+                    ? "On time"
+                    : "Idle"
+              }
+            />
+            <TimelineRow
+              lane="Lane B · Ref"
+              totalWeeks={totalWeeks}
+              blocks={laneBRef}
+              blackouts={blackoutsB}
+              deadline="All valid"
+            />
+            <TimelineRow
+              lane="Lane B · Frontier"
+              totalWeeks={totalWeeks}
+              blocks={laneBFront}
+              blackouts={blackoutsB}
+              deadline={
+                laneBFront.some((b) => b.variant === "front-fail")
+                  ? "Rule breach"
+                  : laneBFront.length > 0
+                    ? "On time"
+                    : "Idle"
+              }
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className={`panel tool-panel ${inspectorOpen ? "open" : "collapsed"}`}>
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">MCP tool call inspector</p>
+            <h2>Recorded decision trace ({traceSteps.length} calls)</h2>
+          </div>
+          <div className="heading-actions">
+            {inspectorOpen && (
+              <>
+                <div className="trace-agent-switch" role="group" aria-label="Trace agent">
+                  <button
+                    type="button"
+                    className={traceAgent === "frontier" ? "active" : ""}
+                    onClick={() => setTraceAgent("frontier")}
+                  >
+                    Frontier
+                  </button>
+                  <button
+                    type="button"
+                    className={traceAgent === "reference" ? "active" : ""}
+                    onClick={() => setTraceAgent("reference")}
+                  >
+                    Reference
+                  </button>
+                </div>
+                {activeShockIdx !== null && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setStepIdx(activeShockIdx)}
+                  >
+                    <Icon name="play" size={15} /> Jump to disruption (Step{" "}
+                    {traceSteps[activeShockIdx]?.step_index ?? activeShockIdx + 1})
+                  </button>
+                )}
+              </>
+            )}
+            <button
+              type="button"
+              className="compact-toggle"
+              onClick={() => setInspectorOpen((prev) => !prev)}
+              aria-expanded={inspectorOpen}
+            >
+              {inspectorOpen ? "Hide tool trace ▴" : "MCP tool call inspector ▾"}
+            </button>
+          </div>
+        </div>
+
+        {inspectorOpen && traceSteps.length > 0 && stepInfo && (
+          <>
+            <div className="scrubber">
+              {traceSteps.map((st, i) => (
+                <button
+                  key={`${st.step_index}-${i}`}
+                  type="button"
+                  onClick={() => setStepIdx(i)}
+                  className={safeStepIdx >= i ? "active" : ""}
+                  aria-label={`Go to step ${st.step_index}`}
+                >
+                  <span>
+                    {safeStepIdx > i ? <Icon name="check" size={12} /> : st.step_index}
+                  </span>
+                  {i < traceSteps.length - 1 && <i />}
+                </button>
+              ))}
+            </div>
+            <div className={`call-detail ${stepInfo.variant}`}>
+              <div className="call-number">STEP {currentStep.step_index}</div>
+              <div>
+                <code>{stepInfo.signature}</code>
+                <p>{stepInfo.summary}</p>
+              </div>
+              <span className="call-status">{stepInfo.status}</span>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Integrity({ scorecard }: { scorecard: ScorecardData }) {
+  const [showAttackDetails, setShowAttackDetails] = useState(false);
+
+  const blockedRatio = `${scorecard.rubric.exploits_blocked}/${scorecard.rubric.exploits_total}`;
+  const maxExploit = scorecard.rubric.max_exploit_score.toFixed(2);
+  const doNothing = scorecard.rubric.do_nothing_score.toFixed(2);
+
+  const rows = scorecard.exploits.map((item: ExploitAuditItem) => {
+    const mapped = EXPLOIT_PLAIN_MAP[item.exploit_id];
+    return {
+      id: item.exploit_id,
+      attack: mapped?.title ?? item.name,
+      attempt: mapped?.attempt ?? item.attack_vector,
+      defense: mapped?.defense ?? item.defense_mechanism,
+      score: item.observed_score.toFixed(2),
+      blocked: item.blocked,
+    };
+  });
+
+  return (
+    <div className="view-stack">
+      <section className="view-intro">
+        <div>
+          <p className="eyebrow">Anti-cheat & reward integrity</p>
+          <h1>Good scores require actually solving the task.</h1>
+          <p>
+            Every reward is recomputed from immutable server state. Shortcuts stay at or near zero.
+          </p>
+        </div>
+        <div className="integrity-score">
+          <Icon name="shield" size={22} />
+          <div>
+            <strong>{blockedRatio}</strong>
+            <span>exploits blocked</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="integrity-callout">
+        <div className="lock-visual">
+          <Icon name="shield" size={26} />
+        </div>
+        <div>
+          <h2>Server-authoritative by design</h2>
+          <p>
+            The final score is based on the verified plan—not agent claims, tool-call volume, or
+            malformed output.
+          </p>
+        </div>
+        <div className="callout-points">
+          <span>
+            <Icon name="check" size={13} /> Strict schema
+          </span>
+          <span>
+            <Icon name="check" size={13} /> Immutable final state
+          </span>
+          <span>
+            <Icon name="check" size={13} /> Global resource ledger
+          </span>
+        </div>
+      </section>
+
+      <section className="panel table-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Adversarial test suite</p>
+            <h2>Blocked reward-hacking attacks</h2>
+          </div>
+          <div className="heading-actions">
+            <span className="score-range">
+              Observed range&nbsp; <b>0.00–{maxExploit}</b>
+            </span>
+            <button
+              type="button"
+              className="compact-toggle"
+              onClick={() => setShowAttackDetails((prev) => !prev)}
+              aria-expanded={showAttackDetails}
+            >
+              {showAttackDetails ? "Hide attack details ▴" : "Show attack details ▾"}
+            </button>
+          </div>
+        </div>
+        <div className="table-scroll">
+          <table className={showAttackDetails ? "" : "compact-table"}>
+            <thead>
+              <tr>
+                <th>Attack</th>
+                {showAttackDetails && <th>What the agent attempts</th>}
+                <th>Defense</th>
+                <th>Score</th>
+                <th>Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={row.id}>
+                  <td>
+                    <span className="table-index">{String(i + 1).padStart(2, "0")}</span>
+                    <strong>{row.attack}</strong>
+                  </td>
+                  {showAttackDetails && <td>{row.attempt}</td>}
+                  <td>
+                    <span className="defense-chip">
+                      <Icon name="shield" size={13} />
+                      {row.defense}
+                    </span>
+                  </td>
+                  <td>
+                    <code>{row.score}</code>
+                  </td>
+                  <td>
+                    <StatusBadge pass={row.blocked}>
+                      {row.blocked ? "Blocked" : "Flagged"}
+                    </StatusBadge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="integrity-footnotes">
+        <div>
+          <strong>{doNothing}</strong>
+          <span>Do-nothing baseline</span>
+          <p>No partial credit for avoiding the task.</p>
+        </div>
+        <div>
+          <strong>{maxExploit}</strong>
+          <span>Highest exploit score</span>
+          <p>Far below any valid full-plan result.</p>
+        </div>
+        <div>
+          <strong>100%</strong>
+          <span>Final-state verification</span>
+          <p>Every submitted constraint is recomputed.</p>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const JUDGE_COMMANDS = [
+  {
+    id: "offline",
+    label: "Verify + UI",
+    cmd: "python scripts/run_eval.py --verify-recorded --serve",
+  },
+  {
+    id: "live",
+    label: "Live 3× eval",
+    cmd: "python scripts/run_eval.py --all --env-file .env --runs 3",
+  },
+  {
+    id: "harbor",
+    label: "Harbor task",
+    cmd: "harbor run --path harbor_task --agent oracle",
+  },
+];
+
+function Learning({
+  scorecard,
+  judgeOpen,
+  onToggleJudge,
+}: {
+  scorecard: ScorecardData;
+  judgeOpen: boolean;
+  onToggleJudge: () => void;
+}) {
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const copyCmd = async (id: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      window.setTimeout(() => setCopiedId(null), 1800);
+    } catch {
+      setCopiedId(null);
+    }
+  };
+
+  const tb = scorecard.tiebreaker;
+  const relGain = Math.round(tb.relative_gain_pct);
+  const beforePct = Math.max(8, Math.min(96, Math.round((tb.before_mean / 0.4) * 100)));
+  const afterPct = Math.max(8, Math.min(96, Math.round((tb.after_mean / 0.4) * 100)));
+  const refMean = scorecard.rubric.reference_mean.toFixed(2);
+  const frontMean = scorecard.rubric.frontier_mean.toFixed(2);
+
+  return (
+    <div className="view-stack">
+      <section className="view-intro">
+        <div>
+          <p className="eyebrow">Small-model training & CLI</p>
+          <h1>Trajectories teach. Held-out scenarios prove it.</h1>
+          <p>
+            A smaller model improves on unseen disruptions after learning from benchmark experience.
+          </p>
+        </div>
+        <div className="improvement-pill">
+          <Icon name="learn" size={18} />
+          <strong>+{relGain}%</strong>
+          <span>relative improvement</span>
+        </div>
+      </section>
+
+      <section className="learning-grid">
+        <div className="panel chart-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Generalization result</p>
+              <h2>Unseen held-out evaluation</h2>
+            </div>
+            <span className="model-chip">{tb.model_family}</span>
+          </div>
+          <div className="bar-chart">
+            <div className="axis-labels">
+              <span>0.40</span>
+              <span>0.30</span>
+              <span>0.20</span>
+              <span>0.10</span>
+              <span>0.00</span>
+            </div>
+            <div className="grid-lines">
+              {Array.from({ length: 5 }, (_, i) => (
+                <i key={i} />
+              ))}
+            </div>
+            <div className="bar-item before">
+              <div className="bar-value">{tb.before_mean.toFixed(2)}</div>
+              <div className="bar" style={{ height: `${beforePct}%` }} />
+              <strong>Before</strong>
+              <span>Base model</span>
+            </div>
+            <div className="bar-item after">
+              <div className="bar-value">{tb.after_mean.toFixed(2)}</div>
+              <div className="bar" style={{ height: `${afterPct}%` }} />
+              <strong>After</strong>
+              <span>Trajectory learning</span>
+            </div>
+            <div className="delta-arrow">
+              <span>+{tb.delta_improvement.toFixed(2)}</span>
+              <Icon name="arrow" size={18} />
+            </div>
+          </div>
+          <div className="chart-note">
+            <Icon name="check" size={15} />
+            <p>
+              <strong>No test-set leakage.</strong> Distilled solely from evaluation trajectories;
+              tested automatically on unseen held-out disruptions.
+            </p>
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Automatic held-out suite</p>
+              <h2>Unseen disruption breakdown</h2>
+            </div>
+            <StatusBadge pass>Auto-evaluated</StatusBadge>
+          </div>
+          <div className="heldout-list">
+            {tb.per_seed.map((row) => {
+              const meta = HELDOUT_PLAIN_TITLES[row.seed] ?? {
+                title: row.scenario_title,
+                summary: row.key_learned_adaptation,
+              };
+              const positive = row.delta > 0.0005;
+              return (
+                <div className="heldout-item" key={row.seed}>
+                  <div>
+                    <strong>{meta.title}</strong>
+                    <p>{meta.summary}</p>
+                  </div>
+                  <div className="heldout-scores">
+                    <span className="before-val">{row.before_score.toFixed(2)}</span>
+                    <Icon name="arrow" size={13} />
+                    <span className="after-val">{row.after_score.toFixed(2)}</span>
+                    <span className={`heldout-delta ${positive ? "" : "neutral"}`}>
+                      {positive ? `+${row.delta.toFixed(2)}` : "maintained"}
                     </span>
                   </div>
                 </div>
-              </div>
-            </div>
-
-            {/* Per-Seed Grouped Mini Bar Visualization (S01-S05) */}
-            <div className="mt-3 pt-2 border-t border-slate-800/80 grid grid-cols-5 gap-1.5">
-              {scorecard.per_seed
-                .filter((s) => s.split === "eval")
-                .map((s) => (
-                  <button
-                    key={s.seed}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedSeed(s.seed);
-                      setPreferTiebreakerPair(false);
-                      setActiveTab("replay");
-                    }}
-                    title={`${s.seed}: Ref ${s.reference_score.toFixed(2)} vs Frontier ${s.frontier_mean.toFixed(2)}`}
-                    className={`p-1 rounded bg-[#070e18] border ${
-                      selectedSeed === s.seed ? "border-sky-400" : "border-slate-800"
-                    }`}
-                  >
-                    <div className="h-8 flex items-end justify-center gap-1">
-                      <div
-                        className="w-2 bg-emerald-400 rounded-t-sm"
-                        style={{ height: `${Math.round(s.reference_score * 100)}%` }}
-                      />
-                      <div
-                        className="w-2 bg-amber-400 rounded-t-sm"
-                        style={{ height: `${Math.round(s.frontier_mean * 100)}%` }}
-                      />
-                    </div>
-                    <div className="text-[9px] font-mono text-center text-slate-400 mt-0.5">
-                      {s.seed}
-                    </div>
-                  </button>
-                ))}
-            </div>
+              );
+            })}
           </div>
-
-          {/* Card 2: MEANINGFUL DIFFICULTY (30 pts) */}
-          <div className="bg-[#0c1420] border border-scada-border rounded-xl p-3.5 shadow-lg flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between text-[10.5px] font-mono uppercase">
-                <span className="text-amber-400 font-bold flex items-center gap-1">
-                  <AlertTriangle className="w-3.5 h-3.5" /> 2. MEANINGFUL DIFFICULTY (30 PTS)
-                </span>
-                <span className="text-slate-400">Click tag → Step</span>
-              </div>
-              <p className="text-[11px] text-slate-400 mt-1">
-                6 coupled physics, supply-shock & factory failure modes linked to logged decisions:
-              </p>
-            </div>
-
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {scorecard.failure_taxonomy.map((ft) => {
-                const isExp = expandedFailureCode === ft.code;
-                return (
-                  <button
-                    key={ft.code}
-                    type="button"
-                    onClick={() => setExpandedFailureCode(isExp ? null : ft.code)}
-                    className={`px-2 py-1 rounded text-[10px] font-mono font-bold border transition flex items-center gap-1 ${
-                      isExp
-                        ? "bg-amber-500/25 text-amber-200 border-amber-400"
-                        : "bg-[#08101a] text-slate-300 border-slate-800 hover:border-amber-500/50"
-                    }`}
-                  >
-                    <span>{ft.code}</span>
-                    <span className="text-amber-400">({ft.occurrences})</span>
-                  </button>
-                );
-              })}
-            </div>
+          <div className="heldout-auto-note">
+            <span>Kept separate from interactive replay to preserve clean held-out separation.</span>
+            <strong>{tb.per_seed.length} unseen tests</strong>
           </div>
-
-          {/* Card 3: REWARD INTEGRITY (25 pts) */}
-          <div
-            onClick={() => setActiveTab("integrity")}
-            className="cursor-pointer bg-[#0c1420] hover:bg-[#0f1928] border border-scada-border hover:border-emerald-500/50 rounded-xl p-3.5 shadow-lg transition flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center justify-between text-[10.5px] font-mono uppercase">
-                <span className="text-emerald-400 font-bold flex items-center gap-1">
-                  <ShieldCheck className="w-3.5 h-3.5" /> 3. REWARD INTEGRITY (25 PTS)
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-extrabold">
-                  {scorecard.rubric.exploits_blocked}/{scorecard.rubric.exploits_total} BLOCKED
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 mt-2.5 font-mono">
-                <div className="p-2 rounded bg-[#070e18] border border-slate-800">
-                  <div className="text-[9.5px] text-slate-500">DO-NOTHING</div>
-                  <div className="text-base font-extrabold text-emerald-400 tabular-nums">
-                    {scorecard.rubric.do_nothing_score.toFixed(3)}
-                  </div>
-                </div>
-                <div className="p-2 rounded bg-[#070e18] border border-slate-800">
-                  <div className="text-[9.5px] text-slate-500">STOP-EARLY CAP</div>
-                  <div className="text-base font-extrabold text-emerald-400 tabular-nums">
-                    {scorecard.rubric.stop_early_score.toFixed(3)}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10.5px] font-mono text-emerald-300">
-              <span>Max Red-Team Exploit &le; {scorecard.rubric.max_exploit_score.toFixed(2)}</span>
-              <span className="underline">Audit 8 Attacks →</span>
-            </div>
-          </div>
-
-          {/* Card 4: TIEBREAKER (+EDGE) */}
-          <div
-            onClick={() => setActiveTab("tiebreaker")}
-            className="cursor-pointer bg-[#0c1420] hover:bg-[#0f1928] border border-scada-border hover:border-violet-400/50 rounded-xl p-3.5 shadow-lg transition flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center justify-between text-[10.5px] font-mono uppercase">
-                <span className="text-violet-300 font-bold flex items-center gap-1">
-                  <Award className="w-3.5 h-3.5" /> 4. TIEBREAKER (+EDGE)
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-200 font-extrabold">
-                  S06–S08 HELD-OUT
-                </span>
-              </div>
-
-              <div className="mt-2 flex items-baseline justify-between font-mono">
-                <div>
-                  <div className="text-[10px] text-slate-400">Small Before</div>
-                  <div className="text-xl font-extrabold text-amber-400 tabular-nums">
-                    {scorecard.tiebreaker.before_mean.toFixed(3)}
-                  </div>
-                </div>
-                <Sparkles className="w-4 h-4 text-violet-400" />
-                <div className="text-right">
-                  <div className="text-[10px] text-emerald-300">After QLoRA</div>
-                  <div className="text-xl font-extrabold text-emerald-400 tabular-nums">
-                    {scorecard.tiebreaker.after_mean.toFixed(3)}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10.5px] font-mono text-violet-200">
-              <span>Qwen2.5-3B / Gemma-4 LoRA (+{scorecard.tiebreaker.delta_improvement.toFixed(2)})</span>
-              <span className="underline">Inspect S06–S08 →</span>
-            </div>
-          </div>
-        </section>
-
-        {/* Interactive Failure-Mode Taxonomy Drawer (when a failure tag is clicked) */}
-        {selectedTaxonomy && (
-          <section className="bg-[#101927] border border-amber-400/50 rounded-xl p-4 shadow-glow-amber space-y-3">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-xs font-mono font-extrabold">
-                    {selectedTaxonomy.code}
-                  </span>
-                  <h3 className="text-sm font-bold text-slate-100">{selectedTaxonomy.title}</h3>
-                  <span className="text-xs font-mono text-slate-400">
-                    ({selectedTaxonomy.occurrences} logged violations across {selectedTaxonomy.affected_seeds.join(", ")})
-                  </span>
-                </div>
-                <p className="text-xs text-slate-300 mt-1">{selectedTaxonomy.root_cause}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setExpandedFailureCode(null)}
-                className="text-xs font-mono text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-900 border border-slate-800"
-              >
-                Close ✕
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-              {selectedTaxonomy.incidents.map((inc, i) => (
-                <button
-                  key={`${inc.run_id}-${inc.order_id}-${i}`}
-                  type="button"
-                  onClick={() => jumpToFailureIncident(inc)}
-                  className="text-left p-3 rounded-lg bg-[#070e18] hover:bg-sky-950/40 border border-slate-800 hover:border-sky-400/60 transition flex flex-col justify-between gap-2"
-                >
-                  <div>
-                    <div className="flex items-center justify-between text-[10.5px] font-mono">
-                      <span className="text-sky-300 font-bold">
-                        {inc.seed} · {inc.order_id} · Step #{inc.step_index}
-                      </span>
-                      <ExternalLink className="w-3 h-3 text-sky-400" />
-                    </div>
-                    <div className="mt-1 px-1.5 py-0.5 inline-block rounded bg-rose-500/20 border border-rose-500/40 text-rose-200 text-[10px] font-mono font-bold">
-                      {inc.violation_badge}
-                    </div>
-                    <p className="text-[11px] text-slate-300 mt-1.5 leading-snug">{inc.summary}</p>
-                  </div>
-                  <div className="text-[10px] font-mono text-sky-400 font-bold">
-                    Jump to Logged CAD & Gantt Decision →
-                  </div>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Studio Navigation Tabs + Active Seed Scenario Context */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-scada-border pb-2.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveTab("replay")}
-              className={`px-3.5 py-2 rounded-lg text-xs font-mono font-bold flex items-center gap-2 transition ${
-                activeTab === "replay"
-                  ? "bg-sky-500/20 text-sky-200 border border-sky-400/60 shadow-glow-cyan"
-                  : "bg-[#0c1420] text-slate-400 border border-scada-border hover:text-slate-200"
-              }`}
-            >
-              <Layers className="w-4 h-4 text-sky-400" />
-              Tab 1 · Trajectory, GOST CAD & Shock Replay
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("integrity")}
-              className={`px-3.5 py-2 rounded-lg text-xs font-mono font-bold flex items-center gap-2 transition ${
-                activeTab === "integrity"
-                  ? "bg-emerald-500/20 text-emerald-200 border border-emerald-400/60 shadow-glow-emerald"
-                  : "bg-[#0c1420] text-slate-400 border border-scada-border hover:text-slate-200"
-              }`}
-            >
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              Tab 2 · Reward Integrity & 8-Attack Red-Team Audit
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("tiebreaker")}
-              className={`px-3.5 py-2 rounded-lg text-xs font-mono font-bold flex items-center gap-2 transition ${
-                activeTab === "tiebreaker"
-                  ? "bg-violet-500/20 text-violet-100 border border-violet-400/60"
-                  : "bg-[#0c1420] text-slate-400 border border-scada-border hover:text-slate-200"
-              }`}
-            >
-              <Sparkles className="w-4 h-4 text-violet-400" />
-              Tab 3 · Held-Out Tiebreaker (S06–S08) & Reproducibility
-            </button>
-          </div>
-
-          {currentSeedSummary && (
-            <div className="flex items-center gap-2 text-xs font-mono text-slate-300 bg-[#0c1420] px-3 py-1.5 rounded-lg border border-scada-border">
-              <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span className="font-bold text-sky-300">{currentSeedSummary.seed}:</span>
-              <span className="truncate max-w-md">{currentSeedSummary.scenario_title}</span>
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 ml-1 shrink-0" />
-              <span className="text-emerald-400 font-bold">
-                Ref {currentSeedSummary.reference_score.toFixed(3)}
-              </span>
-            </div>
-          )}
         </div>
+      </section>
 
-        {/* Active Tab View */}
-        {activeTab === "replay" && (
-          <TrajectoryDiff
-            seed={selectedSeed}
-            seedRuns={seedRuns}
-            focusedIncident={focusedIncident}
-            preferTiebreakerPair={preferTiebreakerPair}
-          />
+      <section id="judge-cli-guide" className="judge-collapsible">
+        <button
+          type="button"
+          className="expander-bar"
+          onClick={onToggleJudge}
+          aria-expanded={judgeOpen}
+        >
+          <div className="expander-bar-left">
+            <span className="expander-bar-title">Reproduce & run locally</span>
+            <span className="expander-bar-hint">
+              1-command offline replay + Harbor sandbox + 3-step audit checklist
+            </span>
+          </div>
+          <span className="expander-pill">
+            {judgeOpen ? "Hide CLI & Harbor quick-start ▴" : "CLI & Harbor quick-start ▾"}
+          </span>
+        </button>
+
+        {judgeOpen && (
+          <div className="judge-drawer-stack">
+            <div className="panel judge-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Reproduce & run locally</p>
+                  <h2>Reproduce in one command</h2>
+                </div>
+                <Icon name="terminal" size={24} />
+              </div>
+              <ol className="judge-steps">
+                <li>
+                  <span>1</span>
+                  <div>
+                    <strong>Verify recorded trajectories & launch this viewer (no API key required)</strong>
+                    <p>Re-audits every trajectory from scratch, writes scorecards, and serves port 8095.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>2</span>
+                  <div>
+                    <strong>Optional: Run full 3× live evaluation or Harbor container check</strong>
+                    <p>Re-runs live frontier & held-out evaluations or executes the Harbor oracle task.</p>
+                  </div>
+                </li>
+              </ol>
+
+              <div className="terminal-box">
+                <div className="terminal-top">
+                  <span>
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  <small>TERMINAL · PROJECT ROOT</small>
+                </div>
+                {JUDGE_COMMANDS.map((item) => (
+                  <div className="terminal-command compact-cmd" key={item.id}>
+                    <span className="cmd-label">{item.label}</span>
+                    <code>{item.cmd}</code>
+                    <button
+                      type="button"
+                      onClick={() => copyCmd(item.id, item.cmd)}
+                      aria-label={`Copy ${item.label} command`}
+                    >
+                      <Icon name={copiedId === item.id ? "check" : "copy"} size={16} />
+                      {copiedId === item.id ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="expected">
+                <span>Expected outputs</span>
+                <div>
+                  <Icon name="check" size={14} />
+                  <p>
+                    Scorecard written to <code>runs/scorecard.json</code> and{" "}
+                    <code>runs/SCORECARD.md</code>
+                  </p>
+                </div>
+                <div>
+                  <Icon name="check" size={14} />
+                  <p>Per-step MCP traces served live on http://127.0.0.1:8095</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="judge-checklist">
+              <div>
+                <p className="eyebrow">What to verify</p>
+                <h2>Three checks. Under five minutes.</h2>
+              </div>
+              <div className="check-item">
+                <span>01</span>
+                <p>
+                  <strong>Score separation</strong> Reference stays at {refMean} while the frontier
+                  agent averages {frontMean} (+{scorecard.rubric.gap_delta.toFixed(2)} gap).
+                </p>
+              </div>
+              <div className="check-item">
+                <span>02</span>
+                <p>
+                  <strong>Hard constraints</strong> Open any failed job in Agent Comparison and
+                  click Why? to confirm the exact server-side rule violation.
+                </p>
+              </div>
+              <div className="check-item">
+                <span>03</span>
+                <p>
+                  <strong>Held-out lift</strong> Confirm {tb.model_family} improves from{" "}
+                  {tb.before_mean.toFixed(2)} to {tb.after_mean.toFixed(2)} (+{relGain}%) on unseen
+                  held-out disruptions.
+                </p>
+              </div>
+            </div>
+          </div>
         )}
+      </section>
+    </div>
+  );
+}
 
-        {activeTab === "integrity" && <ScorecardPanel scorecard={scorecard} />}
+export function App() {
+  const [activeTab, setActiveTab] = useState("overview");
+  const [judgeOpen, setJudgeOpen] = useState(false);
+  const [scorecard, setScorecard] = useState<ScorecardData>(() =>
+    normalizeScorecardPayload(FALLBACK_SCORECARD)
+  );
 
-        {activeTab === "tiebreaker" && (
-          <TiebreakerPanel
+  useEffect(() => {
+    let cancelled = false;
+    loadStudioData().then((bundle) => {
+      if (!cancelled) {
+        setScorecard(bundle.scorecard);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const current = useMemo(() => tabs.find((tab) => tab.id === activeTab), [activeTab]);
+
+  const openRunGuide = () => {
+    setActiveTab("learning");
+    setJudgeOpen(true);
+    window.setTimeout(() => {
+      document.getElementById("judge-cli-guide")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 60);
+  };
+
+  return (
+    <div className="app-shell">
+      <header>
+        <div className="header-inner">
+          <button
+            type="button"
+            className="brand"
+            onClick={() => setActiveTab("overview")}
+            aria-label="AgentBreak Bench home"
+          >
+            <span className="brand-mark">
+              <i />
+              <i />
+              <i />
+            </span>
+            <span>
+              <strong>AgentBreak</strong>
+              <small>BENCH</small>
+            </span>
+          </button>
+          <div className="header-meta">
+            <span className="byline">by AfterQuery</span>
+            <span className="version">v{scorecard.environment_version || "1.0"}</span>
+            <button type="button" onClick={openRunGuide} className="github-link">
+              Run Guide <Icon name="arrow" size={13} />
+            </button>
+          </div>
+        </div>
+        <nav className="tab-wrap" aria-label="Dashboard views">
+          <div className="tabs">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={activeTab === tab.id ? "active" : ""}
+                onClick={() => setActiveTab(tab.id)}
+                aria-current={activeTab === tab.id ? "page" : undefined}
+              >
+                <Icon name={tab.icon} size={16} />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+      </header>
+      <main key={current?.id}>
+        {activeTab === "overview" && (
+          <Overview scorecard={scorecard} onExplore={() => setActiveTab("comparison")} />
+        )}
+        {activeTab === "comparison" && <Comparison scorecard={scorecard} />}
+        {activeTab === "integrity" && <Integrity scorecard={scorecard} />}
+        {activeTab === "learning" && (
+          <Learning
             scorecard={scorecard}
-            onInspectHeldOutSeed={(seed) => {
-              setSelectedSeed(seed);
-              setPreferTiebreakerPair(true);
-              setActiveTab("replay");
-            }}
+            judgeOpen={judgeOpen}
+            onToggleJudge={() => setJudgeOpen((prev) => !prev)}
           />
         )}
       </main>
+      <footer>
+        <div>
+          <span className="brand-mark small">
+            <i />
+            <i />
+            <i />
+          </span>
+          <strong>AgentBreak Bench</strong>
+        </div>
+        <p>Multi-Constraint Operations & Disruption-Recovery AI Benchmark</p>
+        <span>Built by AfterQuery</span>
+      </footer>
     </div>
   );
-};
+}
 
 export default App;

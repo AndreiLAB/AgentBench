@@ -1,8 +1,8 @@
 services:
   cryoforge-mcp:
     build:
-      context: ../..
-      dockerfile: harbor_task/environment/Dockerfile
+      context: .
+      dockerfile: Dockerfile
       target: cryoforge-mcp
     expose:
       - "8090"
@@ -26,8 +26,8 @@ services:
 
   main:
     build:
-      context: ../..
-      dockerfile: harbor_task/environment/Dockerfile
+      context: .
+      dockerfile: Dockerfile
       target: agent-sandbox
     working_dir: /workspace
     environment:
