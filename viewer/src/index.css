@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #070b11;
+    color: #e2e8f0;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Crisp industrial scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #091019;
+}
+::-webkit-scrollbar-thumb {
+  background: #1f3147;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #38bdf8;
+}
+
+/* Subtle SCADA grid backdrop */
+.scada-grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(31, 49, 71, 0.22) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(31, 49, 71, 0.22) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* Striped blackout hazard pattern for Gantt */
+.hazard-stripes {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(245, 158, 11, 0.22),
+    rgba(245, 158, 11, 0.22) 6px,
+    rgba(15, 23, 42, 0.75) 6px,
+    rgba(15, 23, 42, 0.75) 12px
+  );
+}
+
+.crimson-stripes {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(244, 63, 94, 0.26),
+    rgba(244, 63, 94, 0.26) 6px,
+    rgba(15, 23, 42, 0.8) 6px,
+    rgba(15, 23, 42, 0.8) 12px
+  );
+}
