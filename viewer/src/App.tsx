@@ -415,6 +415,17 @@ function Overview({
   onExplore: () => void;
 }) {
   const [howOpen, setHowOpen] = useState(false);
+  const [copiedCmdId, setCopiedCmdId] = useState<string | null>(null);
+
+  const copyInstallCmd = async (id: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedCmdId(id);
+      window.setTimeout(() => setCopiedCmdId(null), 1800);
+    } catch {
+      setCopiedCmdId(null);
+    }
+  };
 
   const refMean = scorecard.rubric.reference_mean.toFixed(2);
   const frontMean = scorecard.rubric.frontier_mean.toFixed(2);
@@ -640,6 +651,64 @@ function Overview({
             </div>
             <p>1-command local reproduction + held-out generalization from environment trajectories.</p>
           </article>
+        </div>
+      </section>
+
+      <section className="panel judge-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Quick-start & agent skill</p>
+            <h2>Install & use locally</h2>
+          </div>
+          <a
+            href={GITHUB_REPO_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="compact-toggle"
+          >
+            GitHub repo <Icon name="arrow" size={13} />
+          </a>
+        </div>
+        <div className="terminal-box" style={{ marginTop: 0 }}>
+          <div className="terminal-top">
+            <span>
+              <i />
+              <i />
+              <i />
+            </span>
+            <small>LOCAL CLI · AGENT SKILL · HARBOR</small>
+          </div>
+          {INSTALL_COMMANDS.map((item) => (
+            <div className="terminal-command compact-cmd" key={item.id}>
+              <span className="cmd-label">{item.label}</span>
+              <code>{item.cmd}</code>
+              <button
+                type="button"
+                onClick={() => copyInstallCmd(item.id, item.cmd)}
+                aria-label={`Copy ${item.label} command`}
+              >
+                <Icon name={copiedCmdId === item.id ? "check" : "copy"} size={16} />
+                {copiedCmdId === item.id ? "Copied" : "Copy"}
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="expected">
+          <span>Included in repository</span>
+          <div>
+            <Icon name="check" size={14} />
+            <p>
+              Bundled skill at <code>.agents/skills/agentbreak-bench/SKILL.md</code> for zero-key
+              MCP playtesting (Codex / OpenCode / Antigravity / Claude Code) or Harbor evaluation
+            </p>
+          </div>
+          <div>
+            <Icon name="check" size={14} />
+            <p>
+              Verified scorecards in <code>runs/scorecard.json</code>,{" "}
+              <code>runs/SCORECARD.md</code>, and Harbor logs in <code>runs/harbor_jobs/</code>
+            </p>
+          </div>
         </div>
       </section>
     </div>
@@ -1343,21 +1412,43 @@ function Integrity({ scorecard }: { scorecard: ScorecardData }) {
   );
 }
 
+const GITHUB_REPO_URL = "https://github.com/AndreiLAB/AgentBench.git";
+
+const INSTALL_COMMANDS = [
+  {
+    id: "clone-serve",
+    label: "Clone & run (~25s, no key)",
+    description: "Clone & run offline dashboard (~25s, no API key)",
+    cmd: `git clone ${GITHUB_REPO_URL} && cd AgentBench && python scripts/run_eval.py --verify-recorded --serve`,
+  },
+  {
+    id: "agent-skill",
+    label: "Install Agent Skill",
+    description:
+      "Install as an Agent Skill (Codex / OpenCode / Antigravity / Claude Code) — bundled at .agents/skills/agentbreak-bench/SKILL.md",
+    cmd: `npx skills add ${GITHUB_REPO_URL}`,
+  },
+  {
+    id: "harbor-oracle",
+    label: "Harbor container",
+    description: "Run Harbor container task (verified Reference Planner = 0.9445)",
+    cmd: "harbor run -p ./harbor_task -a oracle",
+  },
+];
+
 const JUDGE_COMMANDS = [
+  ...INSTALL_COMMANDS,
   {
     id: "offline",
     label: "Verify + UI",
+    description: "Verify recorded trajectories & launch web dashboard",
     cmd: "python scripts/run_eval.py --verify-recorded --serve",
   },
   {
     id: "live",
     label: "Live 3× eval",
+    description: "Optional full 3× live frontier & held-out evaluation",
     cmd: "python scripts/run_eval.py --all --env-file .env --runs 3",
-  },
-  {
-    id: "harbor",
-    label: "Harbor task",
-    cmd: "harbor run --path harbor_task --agent oracle",
   },
 ];
 
@@ -1569,6 +1660,14 @@ function Learning({
                 <div>
                   <Icon name="check" size={14} />
                   <p>
+                    Bundled agent skill at{" "}
+                    <code>.agents/skills/agentbreak-bench/SKILL.md</code> for zero-key MCP
+                    playtesting or Harbor evaluation
+                  </p>
+                </div>
+                <div>
+                  <Icon name="check" size={14} />
+                  <p>
                     Scorecard written to <code>runs/scorecard.json</code> and{" "}
                     <code>runs/SCORECARD.md</code>
                   </p>
@@ -1673,6 +1772,14 @@ export function App() {
             <button type="button" onClick={openRunGuide} className="github-link">
               Run Guide <Icon name="arrow" size={13} />
             </button>
+            <a
+              href={GITHUB_REPO_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="github-link"
+            >
+              GitHub <Icon name="arrow" size={13} />
+            </a>
           </div>
         </div>
         <nav className="tab-wrap" aria-label="Dashboard views">

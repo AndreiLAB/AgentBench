@@ -10,9 +10,16 @@ description: >-
 
 # AgentBreak Bench
 
-Use this skill inside the repository root to verify recorded results, playtest the environment over MCP, run the Harbor task (`harbor_task/`), or benchmark an external LLM.
+Install this skill into Codex, OpenCode, Antigravity, or Claude Code:
 
-> **Important:** Never overwrite or re-run `runs/trajectories/` or `runs/scorecard.json` unless the user explicitly asks to benchmark a new model. Use `--verify-recorded` when verifying or launching the dashboard.
+```bash
+npx skills add https://github.com/AndreiLAB/AgentBench.git
+```
+
+- **Public Web Dashboard (GitHub Pages):** https://andreilab.github.io/AgentBench/
+- **Repository:** https://github.com/AndreiLAB/AgentBench.git
+
+> **Important:** Never overwrite or re-run `runs/trajectories/` or `runs/scorecard.json` unless the user explicitly asks to benchmark a new model. Use `--verify-recorded` when verifying or launching the local dashboard.
 
 ---
 

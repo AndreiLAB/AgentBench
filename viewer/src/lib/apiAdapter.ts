@@ -290,8 +290,8 @@ export async function loadStudioData(): Promise<LoadedStudioBundle> {
     };
   }
 
-  // 2. Try static public artifact /scorecard.json
-  const staticJson = await fetchJsonQuiet("/scorecard.json");
+  // 2. Try static public artifact ./scorecard.json
+  const staticJson = await fetchJsonQuiet("./scorecard.json");
   if (staticJson) {
     return {
       scorecard: normalizeScorecardPayload(staticJson),
