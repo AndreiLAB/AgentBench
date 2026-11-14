@@ -4,11 +4,15 @@
 
 [**Live Web Dashboard (GitHub Pages)**](https://andreilab.github.io/AgentBench/) · [**Agent Skill (`SKILL.md`)**](.agents/skills/agentbreak-bench/SKILL.md) · [**Harbor Task (`harbor_task/`)**](harbor_task/task.toml) · [**Scorecard (`runs/SCORECARD.md`)**](runs/SCORECARD.md)
 
+![AgentBreak Bench Cover Art](docs/assets/concept-hero-art.png)
+
 ---
 
 ## Overview
 
 **AgentBreak Bench** evaluates whether an AI agent can build a valid multi-resource execution plan—and **recover when live operational constraints change mid-episode**.
+
+![AgentBreak Bench Summary Card](docs/assets/hero-banner.png)
 
 Unlike static Q&A or single-turn coding tasks, each episode places the agent in control of a deterministic industrial commissioning environment (**CryoForge**) over the **Model Context Protocol (`mcp` stdio / SSE)**:
 
@@ -17,6 +21,13 @@ Unlike static Q&A or single-turn coding tasks, each episode places the agent in 
 - **Zero-Trust Scoring & Anti-Cheat (`8/8` Exploits Blocked):** Rewards are computed exclusively at episode completion (`finalize_commissioning`) by an isolated server-side verifier (`env_core/verifier.py`) with `HMAC-SHA256` state signatures. Partial completion is gated (`0` valid jobs = `0.00`, `1/4` valid = capped at `≤ 0.08`), `do_nothing` scores **`0.0000`**, `stop_early` scores **`0.0800`**, and all **8 adversarial reward-hacking attacks** are blocked (`0.00–0.08`).
 - **Verified Harbor Sandbox (`runs/harbor_jobs/`):** Containerized two-service Harbor evaluations (`cryoforge-mcp` SSE sidecar + isolated `/workspace` agent container) are verified and archived in [`runs/harbor_jobs/`](runs/harbor_jobs/) with **`oracle = 0.9445`** and **`nop = 0.0000`**.
 - **Held-Out Small-Model Learning (`+143%`):** Distilling successful trajectories from the 5 evaluation scenarios (`S01–S05`) lifts `gemini-3.5-flash-lite` from **`0.1400` to `0.3400`** (`+0.2000` / **`+142.9%`**) on 3 unseen held-out scenarios (`S06–S08`) with zero test-set leakage.
+
+| Dynamic Multi-Lane Rerouting | Zero-Trust Server Verification |
+| :---: | :---: |
+| ![Multi-Lane Disruption Art](docs/assets/concept-disruption-art.png) | ![Zero-Trust Verification Art](docs/assets/concept-shield-art.png) |
+| *4 modular jobs coordinated across 2 parallel lanes around live Step-4 disruptions* | *8/8 reward-hacking shortcuts deflected by immutable terminal state auditing* |
+
+![Episode Architecture](docs/assets/architecture-flow.png)
 
 ---
 
@@ -71,7 +82,9 @@ python scripts/run_eval.py --all --env-file .env --frontier-provider gemini --fr
 
 ---
 
-## Benchmark Results Summary
+## Benchmark Results & Held-Out Learning
+
+![Scenario Comparison & Small-Model Learning](docs/assets/results-comparison.png)
 
 All trajectories and `HMAC-SHA256` state signatures are stored in [`runs/trajectories/`](runs/trajectories/), [`runs/scorecard.json`](runs/scorecard.json), and [`runs/SCORECARD.md`](runs/SCORECARD.md).
 
@@ -108,8 +121,8 @@ Trajectories and failure contrasts are distilled strictly from `S01–S05` (`zer
 | Held-Out Test | Unseen Mid-Episode Disruption | Base Model (`Before`) | Trajectory-Trained (`After`) | Gain Δ |
 |---|---|---:|---:|---:|
 | **`S06`** | Precision delay (`+2w`), Fjord route `5,600 kg` cap & `-10k EUR` cut | `0.3400` (`2/4` valid) | `0.3400` (`2/4` valid) | `+0.0000` |
-| **`S07`** | `Lane A` Weeks `4–6` outage, Standard-tier loss (`1.50×`) & permit cut | `0.0800` (`1/4` valid) | `0.3400` (`2/4` valid) | **`+0.2600`** |
-| **`S08`** | `Job 2` safety uprate (`2.5 MPa`), Gorge clearance lock & `Lane B` `5.1t` cap | `0.0000` (`0/4` valid) | `0.3400` (`2/4` valid) | **`+0.3400`** |
+| **`S07`** | `Lane A` Weeks `4–6` outage, Standard-tier loss (`1.50×`) & permit cut | `0.0800` (`1/4` valid) | `0.3400` (`1/4` -> `2/4` valid) | **`+0.2600`** |
+| **`S08`** | `Job 2` safety uprate (`2.5 MPa`), Gorge clearance lock & `Lane B` `5.1t` cap | `0.0000` (`0/4` valid) | `0.3400` (`0/4` -> `2/4` valid) | **`+0.3400`** |
 | **Mean** | **12 Unseen Jobs (`0` Overlap with `S01–S05`)** | **`0.1400` (`3/12` valid)** | **`0.3400` (`6/12` valid)** | **`+0.2000` (`+142.9%`)** |
 
 ---
@@ -119,6 +132,7 @@ Trajectories and failure contrasts are distilled strictly from `S01–S05` (`zer
 ```text
 ├── .agents/skills/agentbreak-bench/   # Portable Agent Skill (Codex / OpenCode / Antigravity)
 ├── .github/workflows/pages.yml        # Automated GitHub Pages deployment for viewer/
+├── docs/assets/                       # Product artwork, architecture & results graphics
 ├── env_core/                          # Deterministic physics, schedule ledger, scenarios & verifier
 ├── eval/                              # Reference planner, baselines, exploit suite & LLM runners
 ├── harbor_task/                       # Self-contained Harbor v1.0 task + MCP SSE sidecar

@@ -410,9 +410,13 @@ function summarizeStepCall(step: TrajectoryStepLog): {
 function Overview({
   scorecard,
   onExplore,
+  onOpenIntegrity,
+  onSelectScenario,
 }: {
   scorecard: ScorecardData;
   onExplore: () => void;
+  onOpenIntegrity: () => void;
+  onSelectScenario: (seed: string) => void;
 }) {
   const [howOpen, setHowOpen] = useState(false);
   const [copiedCmdId, setCopiedCmdId] = useState<string | null>(null);
@@ -450,6 +454,11 @@ function Overview({
   return (
     <div className="view-stack">
       <section className="hero">
+        <div
+          className="hero-art-bg"
+          style={{ backgroundImage: 'url("./assets/concept-hero-art.webp")' }}
+          aria-hidden="true"
+        />
         <div className="hero-copy">
           <div className="hero-kicker">
             <Icon name="spark" size={15} />
@@ -476,6 +485,46 @@ function Overview({
             <small>reference vs frontier</small>
           </div>
         </div>
+      </section>
+
+      <section className="visual-showcase-grid" aria-label="Benchmark design concepts">
+        <button type="button" className="visual-card-item" onClick={onExplore}>
+          <div className="visual-card-media">
+            <img
+              src="./assets/concept-disruption-art.webp"
+              alt="Modular jobs rerouting across parallel execution lanes around a mid-episode barrier"
+              loading="lazy"
+            />
+          </div>
+          <div className="visual-card-caption">
+            <div>
+              <small>Dynamic Rerouting</small>
+              <strong>4 modular jobs across 2 contested execution lanes</strong>
+            </div>
+            <span className="visual-card-link">
+              Replay <Icon name="arrow" size={13} />
+            </span>
+          </div>
+        </button>
+
+        <button type="button" className="visual-card-item" onClick={onOpenIntegrity}>
+          <div className="visual-card-media">
+            <img
+              src="./assets/concept-shield-art.webp"
+              alt="Zero-trust verification gate deflecting reward-hacking shortcuts"
+              loading="lazy"
+            />
+          </div>
+          <div className="visual-card-caption">
+            <div>
+              <small>Zero-Trust Verifier</small>
+              <strong>8/8 reward-hacking shortcuts deflected at server boundary</strong>
+            </div>
+            <span className="visual-card-link">
+              Audit <Icon name="arrow" size={13} />
+            </span>
+          </div>
+        </button>
       </section>
 
       <section className={`how-expander ${howOpen ? "open" : "collapsed"}`}>
@@ -654,6 +703,64 @@ function Overview({
         </div>
       </section>
 
+      <section className="panel scenario-chart-panel">
+        <div className="panel-heading" style={{ marginBottom: 18 }}>
+          <div>
+            <p className="eyebrow">Scenario breakdown</p>
+            <h2>Reference solver vs. frontier agent across all 5 disruptions</h2>
+          </div>
+          <div className="legend">
+            <span>
+              <i className="ref-color" />
+              Reference ({refMean})
+            </span>
+            <span>
+              <i className="front-color" style={{ background: "var(--rose)" }} />
+              Frontier ({frontMean})
+            </span>
+          </div>
+        </div>
+        <div className="scenario-bars-list">
+          {EVAL_SCENARIOS.map((scen) => {
+            const seedRow = scorecard.per_seed.find((s) => s.seed === scen.seed);
+            const rVal = seedRow?.reference_score ?? scorecard.rubric.reference_mean;
+            const fVal = seedRow?.frontier_mean ?? scorecard.rubric.frontier_mean;
+            const gapVal = Math.max(0, rVal - fVal);
+            return (
+              <button
+                key={scen.seed}
+                type="button"
+                className="scenario-bar-row"
+                onClick={() => onSelectScenario(scen.seed)}
+              >
+                <div className="sbr-meta">
+                  <strong>{scen.title}</strong>
+                  <small>{scen.disruption}</small>
+                </div>
+                <div className="sbr-tracks">
+                  <div className="sbr-track">
+                    <div
+                      className="sbr-fill-ref"
+                      style={{ width: `${Math.round(rVal * 100)}%` }}
+                    />
+                  </div>
+                  <div className="sbr-track">
+                    <div
+                      className="sbr-fill-front"
+                      style={{ width: `${Math.max(4, Math.round(fVal * 100))}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="sbr-scores">
+                  <b>{rVal.toFixed(2)}</b> vs <span>{fVal.toFixed(2)}</span>
+                  <small>−{gapVal.toFixed(2)} gap · Inspect →</small>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       <section className="panel judge-panel">
         <div className="panel-heading">
           <div>
@@ -776,9 +883,17 @@ function TimelineRow({
   );
 }
 
-function Comparison({ scorecard }: { scorecard: ScorecardData }) {
-  const [selectedSeed, setSelectedSeed] = useState<string>(EVAL_SCENARIOS[0].seed);
-  const [frontierRunIdx, setFrontierRunIdx] = useState<number>(EVAL_SCENARIOS[0].defaultRunIdx);
+function Comparison({
+  scorecard,
+  initialSeed,
+}: {
+  scorecard: ScorecardData;
+  initialSeed?: string;
+}) {
+  const startMeta =
+    EVAL_SCENARIOS.find((s) => s.seed === initialSeed) ?? EVAL_SCENARIOS[0];
+  const [selectedSeed, setSelectedSeed] = useState<string>(startMeta.seed);
+  const [frontierRunIdx, setFrontierRunIdx] = useState<number>(startMeta.defaultRunIdx);
   const [openReasons, setOpenReasons] = useState<Record<string, boolean>>({});
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [traceAgent, setTraceAgent] = useState<"frontier" | "reference">("frontier");
@@ -1716,6 +1831,7 @@ function Learning({
 
 export function App() {
   const [activeTab, setActiveTab] = useState("overview");
+  const [preferredSeed, setPreferredSeed] = useState<string>(EVAL_SCENARIOS[0].seed);
   const [judgeOpen, setJudgeOpen] = useState(false);
   const [scorecard, setScorecard] = useState<ScorecardData>(() =>
     normalizeScorecardPayload(FALLBACK_SCORECARD)
@@ -1768,7 +1884,7 @@ export function App() {
           </button>
           <div className="header-meta">
             <span className="byline">by AfterQuery</span>
-            <span className="version">v{scorecard.environment_version || "1.0"}</span>
+            <span className="version">v1.0</span>
             <button type="button" onClick={openRunGuide} className="github-link">
               Run Guide <Icon name="arrow" size={13} />
             </button>
@@ -1801,9 +1917,26 @@ export function App() {
       </header>
       <main key={current?.id}>
         {activeTab === "overview" && (
-          <Overview scorecard={scorecard} onExplore={() => setActiveTab("comparison")} />
+          <Overview
+            scorecard={scorecard}
+            onExplore={() => {
+              setActiveTab("comparison");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+            onOpenIntegrity={() => {
+              setActiveTab("integrity");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+            onSelectScenario={(seed) => {
+              setPreferredSeed(seed);
+              setActiveTab("comparison");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+          />
         )}
-        {activeTab === "comparison" && <Comparison scorecard={scorecard} />}
+        {activeTab === "comparison" && (
+          <Comparison scorecard={scorecard} initialSeed={preferredSeed} />
+        )}
         {activeTab === "integrity" && <Integrity scorecard={scorecard} />}
         {activeTab === "learning" && (
           <Learning
